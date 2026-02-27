@@ -1,6 +1,6 @@
-import React from 'react';
-import { FileText, CheckCircle, AlertCircle, X, Download } from 'lucide-react';
+import { FileText, CheckCircle, AlertCircle, X, Download, Archive } from 'lucide-react';
 import { saveAs } from 'file-saver';
+import JSZip from 'jszip';
 
 export default function DocumentList({ files, processedFiles, onRemove, processing }) {
 
@@ -15,6 +15,22 @@ export default function DocumentList({ files, processedFiles, onRemove, processi
         const blob = new Blob([processed.bytes], { type: 'application/pdf' });
         saveAs(blob, processed.signedName);
     };
+
+    const downloadAllAsZip = async () => {
+        const successfulFiles = processedFiles.filter(p => p.status === 'success');
+        if (successfulFiles.length === 0) return;
+
+        const zip = new JSZip();
+
+        successfulFiles.forEach((file) => {
+            zip.file(file.signedName, file.bytes);
+        });
+
+        const content = await zip.generateAsync({ type: 'blob' });
+        saveAs(content, 'Signed_Documents.zip');
+    };
+
+    const successfulCount = processedFiles.filter(p => p.status === 'success').length;
 
     if (files.length === 0) {
         return (
@@ -32,10 +48,23 @@ export default function DocumentList({ files, processedFiles, onRemove, processi
 
     return (
         <div className="glass-panel card animate-fade-in" style={{ animationDelay: '0.4s' }}>
-            <h2 className="card-title">
-                <FileText />
-                Documents ({files.length})
-            </h2>
+            <div className="flex-center" style={{ justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+                <h2 className="card-title" style={{ marginBottom: 0 }}>
+                    <FileText />
+                    Documents ({files.length})
+                </h2>
+
+                {successfulCount > 1 && (
+                    <button
+                        className="btn btn-secondary flex-center gap-sm"
+                        onClick={downloadAllAsZip}
+                        style={{ padding: '0.5rem 1rem', fontSize: '0.875rem' }}
+                    >
+                        <Archive size={16} />
+                        Download All (ZIP)
+                    </button>
+                )}
+            </div>
 
             <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
                 {files.map((file, index) => {
