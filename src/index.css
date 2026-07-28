@@ -508,16 +508,19 @@ body {
 
 /* Stamp Preview Box */
 .stamp-preview-box {
-  background: white;
-  color: #0f172a;
+  background: transparent;
+  color: var(--text-primary);
   padding: 1rem 1.25rem;
   border-radius: var(--border-radius-sm);
-  border: 1.5px dashed rgba(15, 23, 42, 0.15);
+  border: 1.5px dashed var(--card-border);
   display: flex;
   flex-direction: column;
   align-items: flex-end; /* Right-align to match PDF output */
   justify-content: center;
-  min-height: 110px;
+  max-width: 180px;
+  width: 100%;
+  aspect-ratio: 1 / 1; /* Perfectly square */
+  margin: 0 auto; /* Center it in the card */
   position: relative;
   overflow: hidden;
 }
@@ -534,7 +537,7 @@ body {
   font-family: 'Helvetica', system-ui, -apple-system, sans-serif;
   font-size: 0.7rem;
   line-height: 1.35;
-  color: #334155;
+  color: var(--text-secondary);
   text-align: right;
   width: 100%;
 }
