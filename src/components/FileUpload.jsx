@@ -18,10 +18,11 @@ export default function FileUpload({
 }) {
     const [isDraggingSig, setIsDraggingSig] = useState(false);
 
+    // Visual scale adjustments for widescreen layout
     const previewSizes = {
-        small: { boxMaxW: '130px', imgMaxH: '35px', imgMaxW: '80px', textFont: '0.6rem' },
-        medium: { boxMaxW: '180px', imgMaxH: '55px', imgMaxW: '120px', textFont: '0.7rem' },
-        large: { boxMaxW: '230px', imgMaxH: '75px', imgMaxW: '160px', textFont: '0.85rem' }
+        small: { boxMaxW: '200px', imgMaxH: '45px', imgMaxW: '100px', textFont: '0.65rem' },
+        medium: { boxMaxW: '270px', imgMaxH: '65px', imgMaxW: '150px', textFont: '0.75rem' },
+        large: { boxMaxW: '340px', imgMaxH: '85px', imgMaxW: '200px', textFont: '0.9rem' }
     };
     const activePreview = previewSizes[stampSize] || previewSizes.medium;
 
@@ -64,7 +65,7 @@ export default function FileUpload({
                     Signature & Stamp Setup
                 </h2>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem', marginBottom: '1.5rem' }}>
                     <div className="input-group">
                         <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 500, marginBottom: '0.25rem' }}>Signer Name</label>
                         <input
@@ -89,7 +90,7 @@ export default function FileUpload({
                             <button
                                 type="button"
                                 className="btn btn-secondary"
-                                style={{ padding: '0 1rem', fontSize: '0.85rem' }}
+                                style={{ padding: '0 0.75rem', fontSize: '0.85rem' }}
                                 onClick={() => {
                                     const today = new Date().toISOString().split('T')[0];
                                     onSignerDateChange(today);

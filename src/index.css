@@ -62,9 +62,9 @@ body {
 
 /* Layout Utilities */
 .container {
-  max-width: 1200px;
+  max-width: 98vw;
   margin: 0 auto;
-  padding: 2rem;
+  padding: 1.5rem 2.5rem;
   width: 100%;
 }
 
@@ -517,7 +517,6 @@ body {
   flex-direction: column;
   align-items: center; /* Center-align elements inside */
   justify-content: center;
-  max-width: 180px;
   width: 100%;
   aspect-ratio: 1 / 1; /* Perfectly square */
   margin: 0 auto; /* Center it in the card */
