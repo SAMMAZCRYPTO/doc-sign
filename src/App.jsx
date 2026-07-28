@@ -21,6 +21,21 @@ function App() {
   const [pageSelectionType, setPageSelectionType] = useState('all');
   const [customPageRange, setCustomPageRange] = useState('');
   const [compressEnabled, setCompressEnabled] = useState(false);
+  const [signatureEnabled, setSignatureEnabled] = useState(false);
+
+  const changeSignerName = (name) => {
+    setSignerName(name);
+    if (name.trim()) {
+      setSignatureEnabled(true);
+    }
+  };
+
+  const changeSignerDate = (date) => {
+    setSignerDate(date);
+    if (date) {
+      setSignatureEnabled(true);
+    }
+  };
 
   const handlePdfUpload = async (files) => {
     // Append new files
@@ -59,10 +74,11 @@ function App() {
 
   const handleSignatureUpload = (file) => {
     setSignatureImage(file);
+    setSignatureEnabled(true);
   };
 
   const handleProcess = async () => {
-    if (pdfFiles.length === 0 || (!signatureImage && !generateSheetEnabled && !signerName && !signerDate && !compressEnabled)) return;
+    if (pdfFiles.length === 0 || (!signatureEnabled && !generateSheetEnabled && !compressEnabled)) return;
 
     setProcessing(true);
     const results = [];
@@ -73,14 +89,14 @@ function App() {
         const file = pdfFiles[i];
         try {
           // Read signature if available
-          const sigBuffer = signatureImage ? await signatureImage.arrayBuffer() : null;
-          const sigType = signatureImage ? signatureImage.type : null;
+          const sigBuffer = signatureEnabled && signatureImage ? await signatureImage.arrayBuffer() : null;
+          const sigType = signatureEnabled && signatureImage ? signatureImage.type : null;
           const pdfBuffer = await file.arrayBuffer();
 
           let processedPdfBytes = await processSignedPDF(pdfBuffer, sigBuffer, sigType, {
             generateResolutionSheet: generateSheetEnabled,
-            signerName: signerName,
-            signerDate: signerDate,
+            signerName: signatureEnabled ? signerName : '',
+            signerDate: signatureEnabled ? signerDate : '',
             stampAlignment: stampAlignment,
             stampSize: stampSize,
             pageSelectionType: pageSelectionType,
@@ -91,7 +107,7 @@ function App() {
             processedPdfBytes = await compressPDF(processedPdfBytes);
           }
 
-          const hasSignatureBlock = signatureImage || signerName || signerDate;
+          const hasSignatureBlock = signatureEnabled && (signatureImage || signerName || signerDate);
           let namePrefix = 'Processed_';
           if (compressEnabled && hasSignatureBlock && generateSheetEnabled) {
             namePrefix = 'Compressed_Signed_CRS_';
@@ -191,7 +207,7 @@ function App() {
               <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Signature & Stamp</span>
               <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Configure details & size</span>
             </div>
-            <span className={`tab-indicator ${hasSignatureBlock ? 'enabled' : ''}`}></span>
+            <span className={`tab-indicator ${signatureEnabled ? 'enabled' : ''}`}></span>
           </button>
 
           <button
@@ -226,9 +242,9 @@ function App() {
               onSignatureUpload={handleSignatureUpload}
               signatureImage={signatureImage}
               signerName={signerName}
-              onSignerNameChange={setSignerName}
+              onSignerNameChange={changeSignerName}
               signerDate={signerDate}
-              onSignerDateChange={setSignerDate}
+              onSignerDateChange={changeSignerDate}
               stampAlignment={stampAlignment}
               onStampAlignmentChange={setStampAlignment}
               stampSize={stampSize}
@@ -241,6 +257,8 @@ function App() {
               onToggleGenerateSheet={setGenerateSheetEnabled}
               compressEnabled={compressEnabled}
               onToggleCompress={setCompressEnabled}
+              signatureEnabled={signatureEnabled}
+              onToggleSignature={setSignatureEnabled}
             />
           </div>
 
@@ -287,7 +305,7 @@ function App() {
                   className="btn btn-primary"
                   style={{ width: '100%' }}
                   onClick={handleProcess}
-                  disabled={pdfFiles.length === 0 || (!signatureImage && !generateSheetEnabled && !signerName && !signerDate && !compressEnabled) || processing}
+                  disabled={pdfFiles.length === 0 || (!signatureEnabled && !generateSheetEnabled && !compressEnabled) || processing}
                 >
                   {processing ? (
                     <>
@@ -296,13 +314,13 @@ function App() {
                   ) : (
                     <>
                       <FileSignature size={20} />
-                      {(signatureImage || signerName || signerDate) && generateSheetEnabled && compressEnabled ? (
+                      {signatureEnabled && generateSheetEnabled && compressEnabled ? (
                         `Sign, Add Sheets & Compress (${pdfFiles.length})`
-                      ) : (signatureImage || signerName || signerDate) && generateSheetEnabled ? (
+                      ) : signatureEnabled && generateSheetEnabled ? (
                         `Sign & Add Sheets (${pdfFiles.length})`
-                      ) : (signatureImage || signerName || signerDate) && compressEnabled ? (
+                      ) : signatureEnabled && compressEnabled ? (
                         `Sign & Compress (${pdfFiles.length})`
-                      ) : (signatureImage || signerName || signerDate) ? (
+                      ) : signatureEnabled ? (
                         `Sign Documents (${pdfFiles.length})`
                       ) : generateSheetEnabled && compressEnabled ? (
                         `Add Sheets & Compress (${pdfFiles.length})`

@@ -20,7 +20,9 @@ export default function FileUpload({
     generateSheetEnabled, 
     onToggleGenerateSheet,
     compressEnabled,
-    onToggleCompress
+    onToggleCompress,
+    signatureEnabled,
+    onToggleSignature
 }) {
     const [isDraggingSig, setIsDraggingSig] = useState(false);
 
@@ -71,7 +73,28 @@ export default function FileUpload({
                     Signature & Stamp Setup
                 </h2>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem', marginBottom: '1.5rem' }}>
+                {/* Master Toggle */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    <label className="toggle-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', borderBottom: '1px solid var(--card-border)', paddingBottom: '1rem', marginBottom: '1.25rem' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', paddingRight: '1rem' }}>
+                            <span style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--text-primary)' }}>Enable Signature & Stamp</span>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Apply signature image and stamp details to documents</span>
+                        </div>
+                        <div className="toggle-switch-wrapper">
+                            <input
+                                type="checkbox"
+                                id="toggle-signature"
+                                checked={signatureEnabled}
+                                onChange={(e) => onToggleSignature(e.target.checked)}
+                                className="toggle-checkbox"
+                            />
+                            <span className="toggle-slider"></span>
+                        </div>
+                    </label>
+                </div>
+
+                <div style={{ opacity: signatureEnabled ? 1 : 0.45, pointerEvents: signatureEnabled ? 'auto' : 'none', transition: 'var(--transition)' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem', marginBottom: '1.5rem' }}>
                     <div className="input-group">
                         <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 500, marginBottom: '0.25rem' }}>Signer Name</label>
                         <input
@@ -270,6 +293,7 @@ export default function FileUpload({
                             </div>
                         )}
                     </div>
+                </div>
                 </div>
             </div>
         );
