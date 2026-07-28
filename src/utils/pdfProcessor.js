@@ -550,7 +550,7 @@ export async function processSignedPDF(pdfBuffer, signatureBuffer, signatureType
         
         const textLines = [];
         if (options.signerName) {
-            textLines.push(`Name: ${options.signerName}`);
+            textLines.push(options.signerName); // No "Name: " prefix
         }
         if (options.signerDate) {
             textLines.push(`Date: ${options.signerDate}`);
@@ -567,18 +567,28 @@ export async function processSignedPDF(pdfBuffer, signatureBuffer, signatureType
             const page = pages[i];
             const { width: pageWidth, height: pageHeight } = page.getSize();
 
-            // Position: Bottom Right with 50px margin
+            // Position margins
             const marginX = 50;
             const marginY = 50;
 
-            // Calculate max width of the block to position it correctly at the bottom-right corner
+            // Calculate max width of the block to position it correctly
             let maxBlockWidth = scaledWidth;
             for (const line of textLines) {
                 const w = helvetica.widthOfTextAtSize(line, fontSize);
                 if (w > maxBlockWidth) maxBlockWidth = w;
             }
 
-            const x = pageWidth - maxBlockWidth - marginX;
+            // Determine X-position based on selected alignment
+            let x;
+            if (options.stampAlignment === 'left') {
+                x = marginX;
+            } else if (options.stampAlignment === 'center') {
+                x = (pageWidth - maxBlockWidth) / 2;
+            } else {
+                // Default: right
+                x = pageWidth - maxBlockWidth - marginX;
+            }
+
             const blockBottomY = marginY;
 
             // 1. Draw text lines from bottom to top, centered relative to the block width

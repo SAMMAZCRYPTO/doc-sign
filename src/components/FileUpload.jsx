@@ -9,6 +9,8 @@ export default function FileUpload({
     onSignerNameChange, 
     signerDate, 
     onSignerDateChange, 
+    stampAlignment,
+    onStampAlignmentChange,
     generateSheetEnabled, 
     onToggleGenerateSheet 
 }) {
@@ -138,6 +140,34 @@ export default function FileUpload({
                             </button>
                         </div>
                     </div>
+
+                    <div className="input-group">
+                        <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 500, marginBottom: '0.25rem' }}>Stamp Alignment</label>
+                        <div style={{ display: 'flex', background: 'rgba(255, 255, 255, 0.03)', padding: '0.2rem', borderRadius: 'var(--border-radius-sm)', border: '1px solid var(--card-border)' }}>
+                            {['left', 'center', 'right'].map((align) => (
+                                <button
+                                    key={align}
+                                    type="button"
+                                    onClick={() => onStampAlignmentChange(align)}
+                                    style={{
+                                        flex: 1,
+                                        padding: '0.4rem',
+                                        background: stampAlignment === align ? 'var(--accent-gradient)' : 'transparent',
+                                        color: stampAlignment === align ? 'white' : 'var(--text-secondary)',
+                                        border: 'none',
+                                        borderRadius: 'var(--border-radius-sm)',
+                                        cursor: 'pointer',
+                                        fontSize: '0.8rem',
+                                        textTransform: 'capitalize',
+                                        fontWeight: 500,
+                                        transition: 'var(--transition)'
+                                    }}
+                                >
+                                    {align}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
                 </div>
 
                 <div style={{ marginBottom: '1.5rem' }}>
@@ -196,7 +226,7 @@ export default function FileUpload({
                         )}
                         {(signerName || signerDate) && (
                             <div className="stamp-preview-text">
-                                {signerName && <div style={{ fontWeight: 600 }}>Name: {signerName}</div>}
+                                {signerName && <div style={{ fontWeight: 600 }}>{signerName}</div>}
                                 {signerDate && <div>Date: {signerDate}</div>}
                             </div>
                         )}

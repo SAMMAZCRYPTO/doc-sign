@@ -14,6 +14,7 @@ function App() {
   const [previewCommentsFile, setPreviewCommentsFile] = useState(null);
   const [signerName, setSignerName] = useState('');
   const [signerDate, setSignerDate] = useState('');
+  const [stampAlignment, setStampAlignment] = useState('right');
 
   const handlePdfUpload = async (files) => {
     // Append new files
@@ -73,7 +74,8 @@ function App() {
           const processedPdfBytes = await processSignedPDF(pdfBuffer, sigBuffer, sigType, {
             generateResolutionSheet: generateSheetEnabled,
             signerName: signerName,
-            signerDate: signerDate
+            signerDate: signerDate,
+            stampAlignment: stampAlignment
           });
 
           const hasSignatureBlock = signatureImage || signerName || signerDate;
@@ -133,6 +135,8 @@ function App() {
             onSignerNameChange={setSignerName}
             signerDate={signerDate}
             onSignerDateChange={setSignerDate}
+            stampAlignment={stampAlignment}
+            onStampAlignmentChange={setStampAlignment}
             generateSheetEnabled={generateSheetEnabled}
             onToggleGenerateSheet={setGenerateSheetEnabled}
           />
