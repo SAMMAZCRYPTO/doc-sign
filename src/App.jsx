@@ -25,16 +25,10 @@ function App() {
 
   const changeSignerName = (name) => {
     setSignerName(name);
-    if (name.trim()) {
-      setSignatureEnabled(true);
-    }
   };
 
   const changeSignerDate = (date) => {
     setSignerDate(date);
-    if (date) {
-      setSignatureEnabled(true);
-    }
   };
 
   const handlePdfUpload = async (files) => {
@@ -50,9 +44,7 @@ function App() {
           ...prev,
           [file.name]: comments
         }));
-        if (comments.length > 0) {
-          setGenerateSheetEnabled(true);
-        }
+        // Comments detected, but we do not auto-enable the sheet page to let user control features manually.
       } catch (error) {
         console.error(`Error scanning comments for ${file.name}:`, error);
       }
@@ -74,7 +66,6 @@ function App() {
 
   const handleSignatureUpload = (file) => {
     setSignatureImage(file);
-    setSignatureEnabled(true);
   };
 
   const handleProcess = async () => {
