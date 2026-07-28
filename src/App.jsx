@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { FileSignature, MessageSquare, X } from 'lucide-react';
+import React, { useState, useCallback } from 'react';
+import { FileSignature, MessageSquare, X, Upload, FilePlus, Settings } from 'lucide-react';
 import FileUpload from './components/FileUpload';
 import DocumentList from './components/DocumentList';
 import { processSignedPDF, extractCommentsFromPDF } from './utils/pdfProcessor';
@@ -15,6 +15,9 @@ function App() {
   const [signerName, setSignerName] = useState('');
   const [signerDate, setSignerDate] = useState('');
   const [stampAlignment, setStampAlignment] = useState('right');
+  const [stampSize, setStampSize] = useState('medium');
+  const [activeTab, setActiveTab] = useState('signature');
+  const [isDraggingPdf, setIsDraggingPdf] = useState(false);
 
   const handlePdfUpload = async (files) => {
     // Append new files
@@ -75,7 +78,8 @@ function App() {
             generateResolutionSheet: generateSheetEnabled,
             signerName: signerName,
             signerDate: signerDate,
-            stampAlignment: stampAlignment
+            stampAlignment: stampAlignment,
+            stampSize: stampSize
           });
 
           const hasSignatureBlock = signatureImage || signerName || signerDate;
@@ -111,6 +115,40 @@ function App() {
     }
   };
 
+  const handlePdfDrop = useCallback((e) => {
+    e.preventDefault();
+    setIsDraggingPdf(false);
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const files = Array.from(e.dataTransfer.files).filter(file => file.type === 'application/pdf');
+      if (files.length > 0) {
+        handlePdfUpload(files);
+      } else {
+        alert('Please upload PDF documents only.');
+      }
+    }
+  }, [handlePdfUpload]);
+
+  const handlePdfUploadClick = (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length > 0) {
+      handlePdfUpload(files);
+    }
+    e.target.value = null;
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setIsDraggingPdf(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    setIsDraggingPdf(false);
+  };
+
+  const hasSignatureBlock = !!(signatureImage || signerName || signerDate);
+
   return (
     <div className="container">
       <header className="header animate-fade-in">
@@ -125,64 +163,121 @@ function App() {
         <p>Batch sign multiple PDFs instantly. Upload your documents, add your signature securely in the browser, and download the signed files.</p>
       </header>
 
-      <main className="content-grid animate-fade-in" style={{ animationDelay: '0.1s' }}>
-        <div className="flex-col gap-lg">
-          <FileUpload
-            onPdfUpload={handlePdfUpload}
-            onSignatureUpload={handleSignatureUpload}
-            signatureImage={signatureImage}
-            signerName={signerName}
-            onSignerNameChange={setSignerName}
-            signerDate={signerDate}
-            onSignerDateChange={setSignerDate}
-            stampAlignment={stampAlignment}
-            onStampAlignmentChange={setStampAlignment}
-            generateSheetEnabled={generateSheetEnabled}
-            onToggleGenerateSheet={setGenerateSheetEnabled}
-          />
-        </div>
+      <div className="workspace-container">
+        <aside className="workspace-sidebar animate-fade-in" style={{ animationDelay: '0.1s' }}>
+          <button
+            className={`sidebar-tab ${activeTab === 'signature' ? 'active' : ''}`}
+            onClick={() => setActiveTab('signature')}
+          >
+            <FileSignature size={18} />
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Signature & Stamp</span>
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Configure details & size</span>
+            </div>
+            <span className={`tab-indicator ${hasSignatureBlock ? 'enabled' : ''}`}></span>
+          </button>
 
-        <div className="flex-col gap-lg">
-          <DocumentList
-            files={pdfFiles}
-            processedFiles={processedFiles}
-            onRemove={removePdf}
-            processing={processing}
-            detectedComments={detectedComments}
-            onPreviewComments={setPreviewCommentsFile}
-          />
+          <button
+            className={`sidebar-tab ${activeTab === 'comments' ? 'active' : ''}`}
+            onClick={() => setActiveTab('comments')}
+          >
+            <MessageSquare size={18} />
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Comment Resolution</span>
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Scan & prepend table sheets</span>
+            </div>
+            <span className={`tab-indicator ${generateSheetEnabled ? 'enabled' : ''}`}></span>
+          </button>
+        </aside>
 
-          <div className="glass-panel card">
-            <div className="action-bar" style={{ marginTop: 0, paddingTop: 0, border: 'none' }}>
-              <button
-                className="btn btn-primary"
-                style={{ width: '100%' }}
-                onClick={handleProcess}
-                disabled={pdfFiles.length === 0 || (!signatureImage && !generateSheetEnabled && !signerName && !signerDate) || processing}
+        <main className="workspace-content animate-fade-in" style={{ animationDelay: '0.15s' }}>
+          <div className="flex-col gap-lg">
+            <FileUpload
+              activeTab={activeTab}
+              onSignatureUpload={handleSignatureUpload}
+              signatureImage={signatureImage}
+              signerName={signerName}
+              onSignerNameChange={setSignerName}
+              signerDate={signerDate}
+              onSignerDateChange={setSignerDate}
+              stampAlignment={stampAlignment}
+              onStampAlignmentChange={setStampAlignment}
+              stampSize={stampSize}
+              onStampSizeChange={setStampSize}
+              generateSheetEnabled={generateSheetEnabled}
+              onToggleGenerateSheet={setGenerateSheetEnabled}
+            />
+          </div>
+
+          <div className="flex-col gap-lg">
+            {/* Upload PDFs Card */}
+            <div className="glass-panel card animate-fade-in" style={{ animationDelay: '0.2s' }}>
+              <h2 className="card-title">
+                <FilePlus />
+                Upload PDFs
+              </h2>
+              <div
+                className={`dropzone ${isDraggingPdf ? 'active' : ''}`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handlePdfDrop}
+                onClick={() => document.getElementById('pdf-upload').click()}
               >
-                {processing ? (
-                  <>
-                    <span className="animate-pulse">Processing...</span>
-                  </>
-                ) : (
-                  <>
-                    <FileSignature size={20} />
-                    {(signatureImage || signerName || signerDate) && generateSheetEnabled ? (
-                      `Sign & Add Sheets (${pdfFiles.length})`
-                    ) : (signatureImage || signerName || signerDate) ? (
-                      `Sign Documents (${pdfFiles.length})`
-                    ) : generateSheetEnabled ? (
-                      `Generate Sheets (${pdfFiles.length})`
-                    ) : (
-                      `Process Documents (${pdfFiles.length})`
-                    )}
-                  </>
-                )}
-              </button>
+                <Upload className="dropzone-icon" />
+                <h3 className="dropzone-title">Drag & drop PDFs here</h3>
+                <p className="dropzone-subtitle">or click to browse. Multiple files supported.</p>
+                <input
+                  type="file"
+                  id="pdf-upload"
+                  accept="application/pdf"
+                  multiple
+                  style={{ display: 'none' }}
+                  onChange={handlePdfUploadClick}
+                />
+              </div>
+            </div>
+
+            <DocumentList
+              files={pdfFiles}
+              processedFiles={processedFiles}
+              onRemove={removePdf}
+              processing={processing}
+              detectedComments={detectedComments}
+              onPreviewComments={setPreviewCommentsFile}
+            />
+
+            <div className="glass-panel card">
+              <div className="action-bar" style={{ marginTop: 0, paddingTop: 0, border: 'none' }}>
+                <button
+                  className="btn btn-primary"
+                  style={{ width: '100%' }}
+                  onClick={handleProcess}
+                  disabled={pdfFiles.length === 0 || (!signatureImage && !generateSheetEnabled && !signerName && !signerDate) || processing}
+                >
+                  {processing ? (
+                    <>
+                      <span className="animate-pulse">Processing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <FileSignature size={20} />
+                      {(signatureImage || signerName || signerDate) && generateSheetEnabled ? (
+                        `Sign & Add Sheets (${pdfFiles.length})`
+                      ) : (signatureImage || signerName || signerDate) ? (
+                        `Sign Documents (${pdfFiles.length})`
+                      ) : generateSheetEnabled ? (
+                        `Generate Sheets (${pdfFiles.length})`
+                      ) : (
+                        `Process Documents (${pdfFiles.length})`
+                      )}
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      </main>
+        </main>
+      </div>
 
       {previewCommentsFile && (
         <div className="modal-overlay flex-center animate-fade-in" onClick={() => setPreviewCommentsFile(null)}>
@@ -222,7 +317,7 @@ function App() {
             
             <div className="modal-footer" style={{ padding: '1rem 1.5rem', borderTop: '1px solid var(--card-border)', display: 'flex', justifyContent: 'flex-end', background: 'rgba(0,0,0,0.1)', borderRadius: '0 0 var(--border-radius-lg) var(--border-radius-lg)' }}>
               <button className="btn btn-secondary" onClick={() => setPreviewCommentsFile(null)}>
-                Close Preview
+                Close
               </button>
             </div>
           </div>

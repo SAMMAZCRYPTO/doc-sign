@@ -1,8 +1,8 @@
 import React, { useCallback, useState } from 'react';
-import { Upload, FilePlus, ImagePlus, X, Settings } from 'lucide-react';
+import { ImagePlus, X, Settings, Upload } from 'lucide-react';
 
 export default function FileUpload({ 
-    onPdfUpload, 
+    activeTab,
     onSignatureUpload, 
     signatureImage, 
     signerName, 
@@ -11,34 +11,19 @@ export default function FileUpload({
     onSignerDateChange, 
     stampAlignment,
     onStampAlignmentChange,
+    stampSize,
+    onStampSizeChange,
     generateSheetEnabled, 
     onToggleGenerateSheet 
 }) {
-    const [isDraggingPdf, setIsDraggingPdf] = useState(false);
     const [isDraggingSig, setIsDraggingSig] = useState(false);
 
-    const handlePdfDrop = useCallback((e) => {
-        e.preventDefault();
-        setIsDraggingPdf(false);
-
-        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            const files = Array.from(e.dataTransfer.files).filter(file => file.type === 'application/pdf');
-            if (files.length > 0) {
-                onPdfUpload(files);
-            } else {
-                alert('Please select valid PDF files.');
-            }
-        }
-    }, [onPdfUpload]);
-
-    const handlePdfUploadClick = (e) => {
-        const files = Array.from(e.target.files);
-        if (files.length > 0) {
-            onPdfUpload(files);
-        }
-        // reset input
-        e.target.value = null;
+    const previewSizes = {
+        small: { boxMaxW: '130px', imgMaxH: '35px', imgMaxW: '80px', textFont: '0.6rem' },
+        medium: { boxMaxW: '180px', imgMaxH: '55px', imgMaxW: '120px', textFont: '0.7rem' },
+        large: { boxMaxW: '230px', imgMaxH: '75px', imgMaxW: '160px', textFont: '0.85rem' }
     };
+    const activePreview = previewSizes[stampSize] || previewSizes.medium;
 
     const handleSigDrop = useCallback((e) => {
         e.preventDefault();
@@ -71,35 +56,9 @@ export default function FileUpload({
         setter(false);
     };
 
-    return (
-        <>
-            <div className="glass-panel card animate-fade-in" style={{ animationDelay: '0.2s' }}>
-                <h2 className="card-title">
-                    <FilePlus />
-                    Upload PDFs
-                </h2>
-                <div
-                    className={`dropzone ${isDraggingPdf ? 'active' : ''}`}
-                    onDragOver={(e) => handleDragOver(e, setIsDraggingPdf)}
-                    onDragLeave={(e) => handleDragLeave(e, setIsDraggingPdf)}
-                    onDrop={handlePdfDrop}
-                    onClick={() => document.getElementById('pdf-upload').click()}
-                >
-                    <Upload className="dropzone-icon" />
-                    <h3 className="dropzone-title">Drag & drop PDFs here</h3>
-                    <p className="dropzone-subtitle">or click to browse from your computer. You can select multiple files.</p>
-                    <input
-                        type="file"
-                        id="pdf-upload"
-                        accept="application/pdf"
-                        multiple
-                        style={{ display: 'none' }}
-                        onChange={handlePdfUploadClick}
-                    />
-                </div>
-            </div>
-
-            <div className="glass-panel card animate-fade-in" style={{ animationDelay: '0.3s' }}>
+    if (activeTab === 'signature') {
+        return (
+            <div className="glass-panel card animate-fade-in" style={{ animationDelay: '0.1s' }}>
                 <h2 className="card-title">
                     <ImagePlus />
                     Signature & Stamp Setup
@@ -168,6 +127,34 @@ export default function FileUpload({
                             ))}
                         </div>
                     </div>
+
+                    <div className="input-group">
+                        <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 500, marginBottom: '0.25rem' }}>Stamp Size</label>
+                        <div style={{ display: 'flex', background: 'rgba(255, 255, 255, 0.03)', padding: '0.2rem', borderRadius: 'var(--border-radius-sm)', border: '1px solid var(--card-border)' }}>
+                            {['small', 'medium', 'large'].map((size) => (
+                                <button
+                                    key={size}
+                                    type="button"
+                                    onClick={() => onStampSizeChange(size)}
+                                    style={{
+                                        flex: 1,
+                                        padding: '0.4rem',
+                                        background: stampSize === size ? 'var(--accent-gradient)' : 'transparent',
+                                        color: stampSize === size ? 'white' : 'var(--text-secondary)',
+                                        border: 'none',
+                                        borderRadius: 'var(--border-radius-sm)',
+                                        cursor: 'pointer',
+                                        fontSize: '0.8rem',
+                                        textTransform: 'capitalize',
+                                        fontWeight: 500,
+                                        transition: 'var(--transition)'
+                                    }}
+                                >
+                                    {size}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
                 </div>
 
                 <div style={{ marginBottom: '1.5rem' }}>
@@ -214,9 +201,9 @@ export default function FileUpload({
                     <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 500, marginBottom: '0.5rem' }}>
                         Signature Block Preview
                     </label>
-                    <div className="stamp-preview-box">
+                    <div className="stamp-preview-box" style={{ maxWidth: activePreview.boxMaxW }}>
                         {signatureImage ? (
-                            <img src={URL.createObjectURL(signatureImage)} alt="Signature Image" className="stamp-preview-image" />
+                            <img src={URL.createObjectURL(signatureImage)} alt="Signature Image" className="stamp-preview-image" style={{ maxHeight: activePreview.imgMaxH, maxWidth: activePreview.imgMaxW }} />
                         ) : (
                             (!signerName && !signerDate) && (
                                 <div style={{ opacity: 0.4, fontSize: '0.85rem', fontStyle: 'italic', width: '100%', textAlign: 'center', margin: 'auto' }}>
@@ -225,7 +212,7 @@ export default function FileUpload({
                             )
                         )}
                         {(signerName || signerDate) && (
-                            <div className="stamp-preview-text">
+                            <div className="stamp-preview-text" style={{ fontSize: activePreview.textFont }}>
                                 {signerName && <div style={{ fontWeight: 600 }}>{signerName}</div>}
                                 {signerDate && <div>Date: {signerDate}</div>}
                             </div>
@@ -233,8 +220,12 @@ export default function FileUpload({
                     </div>
                 </div>
             </div>
+        );
+    }
 
-            <div className="glass-panel card animate-fade-in" style={{ animationDelay: '0.35s' }}>
+    if (activeTab === 'comments') {
+        return (
+            <div className="glass-panel card animate-fade-in" style={{ animationDelay: '0.1s' }}>
                 <h2 className="card-title">
                     <Settings />
                     Processing Options
@@ -258,6 +249,8 @@ export default function FileUpload({
                     </label>
                 </div>
             </div>
-        </>
-    );
+        );
+    }
+
+    return null;
 }

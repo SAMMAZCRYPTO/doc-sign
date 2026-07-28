@@ -520,6 +520,14 @@ export async function processSignedPDF(pdfBuffer, signatureBuffer, signatureType
 
     // Embed and draw the signature block if image, name, or date are provided
     if (signatureBuffer || options.signerName || options.signerDate) {
+        // Define size configurations: Small, Medium, Large
+        const sizeSettings = {
+            small: { maxWidth: 100, maxHeight: 50, fontSize: 6.5, lineHeight: 8.5, spacing: 4 },
+            medium: { maxWidth: 150, maxHeight: 75, fontSize: 7.5, lineHeight: 10, spacing: 6 },
+            large: { maxWidth: 200, maxHeight: 100, fontSize: 9, lineHeight: 12, spacing: 8 }
+        };
+        const activeSettings = sizeSettings[options.stampSize] || sizeSettings.medium;
+
         let signatureImageEmbed;
         let scaledWidth = 0;
         let scaledHeight = 0;
@@ -534,8 +542,8 @@ export async function processSignedPDF(pdfBuffer, signatureBuffer, signatureType
             }
 
             // Calculate scaled dimensions for the signature
-            const maxWidth = 150;
-            const maxHeight = 75;
+            const maxWidth = activeSettings.maxWidth;
+            const maxHeight = activeSettings.maxHeight;
 
             const { width, height } = signatureImageEmbed.scale(1);
             const scale = Math.min(maxWidth / width, maxHeight / height, 1);
@@ -545,8 +553,8 @@ export async function processSignedPDF(pdfBuffer, signatureBuffer, signatureType
 
         // Initialize text details
         const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
-        const fontSize = 7.5;
-        const lineHeight = 10;
+        const fontSize = activeSettings.fontSize;
+        const lineHeight = activeSettings.lineHeight;
         
         const textLines = [];
         if (options.signerName) {
@@ -556,7 +564,7 @@ export async function processSignedPDF(pdfBuffer, signatureBuffer, signatureType
             textLines.push(`Date: ${options.signerDate}`);
         }
 
-        const spacing = signatureBuffer && textLines.length > 0 ? 6 : 0;
+        const spacing = signatureBuffer && textLines.length > 0 ? activeSettings.spacing : 0;
         const textBlockHeight = textLines.length * lineHeight;
         const totalBlockHeight = scaledHeight + spacing + textBlockHeight;
 
