@@ -822,19 +822,25 @@ export async function compressPDF(pdfBuffer) {
             const subtype = dict.get(PDFName.of('Subtype'));
             const filter = dict.get(PDFName.of('Filter'));
 
+            const subtypeStr = subtype ? subtype.toString() : '';
+
             let isDCT = false;
-            if (filter === PDFName.of('DCTDecode')) {
-                isDCT = true;
-            } else if (filter && filter.constructor.name === 'PDFArray') {
-                for (let idx = 0; idx < filter.size(); idx++) {
-                    if (filter.get(idx) === PDFName.of('DCTDecode')) {
-                        isDCT = true;
-                        break;
+            if (filter) {
+                const filterStr = filter.toString();
+                if (filterStr === '/DCTDecode') {
+                    isDCT = true;
+                } else if (filter.constructor.name === 'PDFArray' || (typeof filter.size === 'function' && typeof filter.get === 'function')) {
+                    for (let idx = 0; idx < filter.size(); idx++) {
+                        const item = filter.get(idx);
+                        if (item && item.toString() === '/DCTDecode') {
+                            isDCT = true;
+                            break;
+                        }
                     }
                 }
             }
 
-            if (subtype === PDFName.of('Image') && isDCT) {
+            if (subtypeStr === '/Image' && isDCT) {
                 // This is a JPEG image!
                 try {
                     const rawBytes = obj.contents;
