@@ -79,22 +79,32 @@ function App() {
       for (let i = 0; i < pdfFiles.length; i++) {
         const file = pdfFiles[i];
         try {
-          // Read signature if available
-          const sigBuffer = signatureEnabled && signatureImage ? await signatureImage.arrayBuffer() : null;
-          const sigType = signatureEnabled && signatureImage ? signatureImage.type : null;
           const pdfBuffer = await file.arrayBuffer();
+          let processedPdfBytes;
 
-          let processedPdfBytes = await processSignedPDF(pdfBuffer, sigBuffer, sigType, {
-            generateResolutionSheet: generateSheetEnabled,
-            signerName: signatureEnabled ? signerName : '',
-            signerDate: signatureEnabled ? signerDate : '',
-            stampAlignment: stampAlignment,
-            stampSize: stampSize,
-            pageSelectionType: pageSelectionType,
-            customPageRange: customPageRange
-          });
+          const needsSignOrSheet = signatureEnabled || generateSheetEnabled;
+
+          if (needsSignOrSheet) {
+            // Run the full signing / sheet pipeline
+            const sigBuffer = signatureEnabled && signatureImage ? await signatureImage.arrayBuffer() : null;
+            const sigType   = signatureEnabled && signatureImage ? signatureImage.type : null;
+
+            processedPdfBytes = await processSignedPDF(pdfBuffer, sigBuffer, sigType, {
+              generateResolutionSheet: generateSheetEnabled,
+              signerName: signatureEnabled ? signerName : '',
+              signerDate: signatureEnabled ? signerDate : '',
+              stampAlignment: stampAlignment,
+              stampSize: stampSize,
+              pageSelectionType: pageSelectionType,
+              customPageRange: customPageRange
+            });
+          } else {
+            // No signing or sheet needed — pass original bytes through
+            processedPdfBytes = new Uint8Array(pdfBuffer);
+          }
 
           if (compressEnabled) {
+            // Feed the current bytes (possibly already signed) to the compressor
             processedPdfBytes = await compressPDF(processedPdfBytes);
           }
 
