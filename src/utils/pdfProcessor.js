@@ -1,6 +1,69 @@
 import { PDFDocument, PDFName, PDFString, PDFHexString, rgb, StandardFonts } from 'pdf-lib';
 
 /**
+ * Sanitizes a string so that it can be safely encoded using standard PDF WinAnsi (Windows-1252) encoding.
+ * Replaces common mathematical and layout characters (e.g., ≥, ≤, μ, smart quotes) with safe equivalents,
+ * normalizes accents, and filters out unencodable characters to prevent pdf-lib rendering crashes.
+ * 
+ * @param {string} text - The input text to clean
+ * @returns {string} - The sanitized text
+ */
+export function sanitizeTextForWinAnsi(text) {
+    if (!text) return '';
+    
+    // 1. Common mathematical and layout replacements
+    let cleaned = text
+        .replace(/≥/g, '>=')
+        .replace(/≤/g, '<=')
+        .replace(/≠/g, '!=')
+        .replace(/±/g, '+/-')
+        .replace(/≈/g, '~=')
+        .replace(/≡/g, '==')
+        .replace(/→|➔|➡|➔/g, '->')
+        .replace(/←|⬅/g, '<-')
+        .replace(/⇒|⟹/g, '=>')
+        .replace(/⇐|⟸/g, '<=')
+        .replace(/✓|✔/g, '[x]')
+        .replace(/✗|✘/g, '[ ]')
+        .replace(/μ|µ/g, 'u') // Both Greek mu and Micro sign to standard u
+        .replace(/α/g, 'alpha')
+        .replace(/β/g, 'beta')
+        .replace(/π/g, 'pi')
+        .replace(/·/g, '*')
+        .replace(/●|■|◆|▲|▼/g, '-')
+        .replace(/™/g, '(TM)')
+        .replace(/©/g, '(C)')
+        .replace(/®/g, '(R)');
+
+    // 2. Decompose accented letters and strip the accents (e.g. é -> e)
+    cleaned = cleaned.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+    // 3. Strict filter for WinAnsi (Windows-1252) allowed characters
+    const allowedCodePoints = new Set([
+        0x20AC, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6,
+        0x2030, 0x0160, 0x2039, 0x0152, 0x017D, 0x2018, 0x2019, 0x201C,
+        0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A,
+        0x0153, 0x017E, 0x0178
+    ]);
+
+    let result = '';
+    for (let i = 0; i < cleaned.length; i++) {
+        const char = cleaned[i];
+        const code = char.charCodeAt(0);
+        
+        if ((code >= 0x00 && code <= 0x7F) || (code >= 0xA0 && code <= 0xFF) || allowedCodePoints.has(code)) {
+            result += char;
+        } else {
+            // Replace completely unsupported symbols with a space to prevent crash
+            result += ' ';
+        }
+    }
+    
+    // Clean up multiple spaces that might have been introduced
+    return result.replace(/\s+/g, ' ').trim();
+}
+
+/**
  * Extracts comments (annotations) from a PDF.
  * 
  * @param {ArrayBuffer} pdfBuffer - The original PDF file buffer
@@ -59,11 +122,26 @@ export async function extractCommentsFromPDF(pdfBuffer) {
                             }
                         }
 
+                        // Extract visual bounding box (/Rect) if present
+                        const rectObj = annotDict.get(PDFName.of('Rect'));
+                        let rect = null;
+                        if (rectObj) {
+                            const lookupRect = pdfDoc.context.lookup(rectObj);
+                            if (lookupRect && typeof lookupRect.asArray === 'function') {
+                                rect = lookupRect.asArray().map(v => {
+                                    return typeof v.asNumber === 'function' 
+                                        ? v.asNumber() 
+                                        : (v.value !== undefined ? v.value : Number(v));
+                                });
+                            }
+                        }
+
                         comments.push({
                             page: pageNum,
                             subtype: subtypeStr.replace('/', ''),
-                            text: text.trim(),
-                            author: author.trim() || 'Anonymous'
+                            text: sanitizeTextForWinAnsi(text.trim()),
+                            author: sanitizeTextForWinAnsi(author.trim()) || 'Anonymous',
+                            rect: rect
                         });
                     }
                 }
@@ -128,6 +206,7 @@ function wrapText(text, width, font, fontSize) {
  */
 async function generateCommentResolutionSheet(pdfDoc, comments) {
     const pages = pdfDoc.getPages();
+    const originalPageRefs = pages.map(p => p.ref);
     const firstPage = pages[0];
     const { width: pageWidth, height: pageHeight } = firstPage ? firstPage.getSize() : { width: 595.27, height: 841.89 };
 
@@ -304,14 +383,28 @@ async function generateCommentResolutionSheet(pdfDoc, comments) {
                 color: rowBg,
             });
 
-            // Draw Column 1: Ref / Page
-            currentPage.drawText(`Page ${comment.page}`, {
+            // Draw Column 1: Ref / Page (Underlined blue hyperlink to original comment)
+            const targetPageRef = originalPageRefs[comment.page - 1];
+            const pageText = `Page ${comment.page}`;
+            const linkColor = rgb(0.1, 0.45, 0.88);
+
+            currentPage.drawText(pageText, {
                 x: colPositions[0] + 6,
                 y: currentY - 18,
                 size: 8.5,
                 font: helveticaBold,
-                color: rgb(0.09, 0.14, 0.25),
+                color: linkColor,
             });
+
+            // Underline
+            const textWidth = helveticaBold.widthOfTextAtSize(pageText, 8.5);
+            currentPage.drawLine({
+                start: { x: colPositions[0] + 6, y: currentY - 19.5 },
+                end: { x: colPositions[0] + 6 + textWidth, y: currentY - 19.5 },
+                thickness: 0.5,
+                color: linkColor,
+            });
+
             currentPage.drawText(`#${index + 1}`, {
                 x: colPositions[0] + 6,
                 y: currentY - 30,
@@ -319,6 +412,32 @@ async function generateCommentResolutionSheet(pdfDoc, comments) {
                 font: helvetica,
                 color: rgb(0.47, 0.55, 0.67),
             });
+
+            // Create and register GoTo page annotation
+            if (targetPageRef) {
+                const linkAnnotation = pdfDoc.context.obj({
+                    Type: 'Annot',
+                    Subtype: 'Link',
+                    Rect: [
+                        colPositions[0],
+                        currentY - rowHeight,
+                        colPositions[0] + colWidths[0],
+                        currentY
+                    ],
+                    Border: [0, 0, 0],
+                    Dest: comment.rect 
+                        ? [targetPageRef, 'XYZ', comment.rect[0] - 20, comment.rect[3] + 20, null]
+                        : [targetPageRef, 'XYZ', null, null, null],
+                });
+
+                const linkRef = pdfDoc.context.register(linkAnnotation);
+
+                if (!currentPage.node.has(PDFName.of('Annots'))) {
+                    currentPage.node.set(PDFName.of('Annots'), pdfDoc.context.obj([]));
+                }
+                const annots = pdfDoc.context.lookup(currentPage.node.get(PDFName.of('Annots')));
+                annots.push(linkRef);
+            }
 
             // Draw Column 2: Comment Details (Author + Text)
             currentPage.drawText(`By: ${comment.author}`, {
