@@ -1,4 +1,4 @@
-import { PDFDocument, PDFName, PDFString, PDFHexString, rgb, StandardFonts, degrees } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFString, PDFHexString, rgb, StandardFonts, degrees, PDFRawStream, PDFNumber } from 'pdf-lib';
 
 /**
  * Sanitizes a string so that it can be safely encoded using standard PDF WinAnsi (Windows-1252) encoding.
@@ -745,14 +745,115 @@ export async function processSignedPDF(pdfBuffer, signatureBuffer, signatureType
 }
 
 /**
- * Compresses an existing PDF buffer by performing garbage collection,
- * compressing stream data, and serialization packing.
+ * Helper to compress image bytes using HTML5 Canvas client-side.
+ */
+async function compressImageBytes(bytes, quality, maxDimension) {
+    return new Promise((resolve) => {
+        const blob = new Blob([bytes], { type: 'image/jpeg' });
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+            URL.revokeObjectURL(url);
+            
+            // Calculate new dimensions
+            let w = img.width;
+            let h = img.height;
+            if (w > maxDimension || h > maxDimension) {
+                if (w > h) {
+                    h = Math.round((h * maxDimension) / w);
+                    w = maxDimension;
+                } else {
+                    w = Math.round((w * maxDimension) / h);
+                    h = maxDimension;
+                }
+            }
+            
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, w, h);
+            
+            canvas.toBlob((compressedBlob) => {
+                if (!compressedBlob) {
+                    resolve(null);
+                    return;
+                }
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    resolve({
+                        bytes: new Uint8Array(reader.result),
+                        width: w,
+                        height: h
+                    });
+                };
+                reader.readAsArrayBuffer(compressedBlob);
+            }, 'image/jpeg', quality);
+        };
+        img.onerror = () => {
+            URL.revokeObjectURL(url);
+            resolve(null);
+        };
+        img.src = url;
+    });
+}
+
+/**
+ * Compresses an existing PDF buffer by performing image downsampling (using HTML5 Canvas)
+ * and object stream serialization.
  * 
  * @param {ArrayBuffer} pdfBuffer - The input PDF buffer
  * @returns {Promise<Uint8Array>} - Compressed PDF bytes
  */
 export async function compressPDF(pdfBuffer) {
     const pdfDoc = await PDFDocument.load(pdfBuffer);
+    
+    // Quality 0.55 (good compression/visual balance)
+    // Max dimension 1200px (standard screen resolution)
+    const quality = 0.55;
+    const maxDimension = 1200;
+
+    const indirectObjects = pdfDoc.context.enumerateIndirectObjects();
+    for (const [ref, obj] of indirectObjects) {
+        if (obj instanceof PDFRawStream || obj.constructor.name === 'PDFRawStream') {
+            const dict = obj.dict;
+            if (!dict) continue;
+
+            const subtype = dict.get(PDFName.of('Subtype'));
+            const filter = dict.get(PDFName.of('Filter'));
+
+            let isDCT = false;
+            if (filter === PDFName.of('DCTDecode')) {
+                isDCT = true;
+            } else if (filter && filter.constructor.name === 'PDFArray') {
+                for (let idx = 0; idx < filter.size(); idx++) {
+                    if (filter.get(idx) === PDFName.of('DCTDecode')) {
+                        isDCT = true;
+                        break;
+                    }
+                }
+            }
+
+            if (subtype === PDFName.of('Image') && isDCT) {
+                // This is a JPEG image!
+                try {
+                    const rawBytes = obj.contents;
+                    const result = await compressImageBytes(rawBytes, quality, maxDimension);
+                    
+                    if (result && result.bytes.length < rawBytes.length) {
+                        // Replace contents!
+                        obj.contents = result.bytes;
+                        dict.set(PDFName.of('Length'), PDFNumber.of(result.bytes.length));
+                        dict.set(PDFName.of('Width'), PDFNumber.of(result.width));
+                        dict.set(PDFName.of('Height'), PDFNumber.of(result.height));
+                    }
+                } catch (err) {
+                    console.warn('Failed to compress embedded image:', err);
+                }
+            }
+        }
+    }
+    
     return await pdfDoc.save({ useObjectStreams: true });
 }
 
