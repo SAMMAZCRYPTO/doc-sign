@@ -571,7 +571,7 @@ export async function processSignedPDF(pdfBuffer, signatureBuffer, signatureType
             const marginX = 50;
             const marginY = 50;
 
-            // Calculate max width of the block to right-align correctly
+            // Calculate max width of the block to position it correctly at the bottom-right corner
             let maxBlockWidth = scaledWidth;
             for (const line of textLines) {
                 const w = helvetica.widthOfTextAtSize(line, fontSize);
@@ -581,11 +581,15 @@ export async function processSignedPDF(pdfBuffer, signatureBuffer, signatureType
             const x = pageWidth - maxBlockWidth - marginX;
             const blockBottomY = marginY;
 
-            // 1. Draw text lines from bottom to top
+            // 1. Draw text lines from bottom to top, centered relative to the block width
             let currentTextY = blockBottomY;
             for (let j = textLines.length - 1; j >= 0; j--) {
-                page.drawText(textLines[j], {
-                    x,
+                const line = textLines[j];
+                const textWidth = helvetica.widthOfTextAtSize(line, fontSize);
+                const textX = x + (maxBlockWidth - textWidth) / 2;
+
+                page.drawText(line, {
+                    x: textX,
                     y: currentTextY,
                     size: fontSize,
                     font: helvetica,
@@ -594,11 +598,12 @@ export async function processSignedPDF(pdfBuffer, signatureBuffer, signatureType
                 currentTextY += lineHeight;
             }
 
-            // 2. Draw signature image on top of the text block
+            // 2. Draw signature image on top of the text block, centered relative to the block width
             if (signatureBuffer) {
                 const imageY = blockBottomY + textBlockHeight + spacing;
+                const imageX = x + (maxBlockWidth - scaledWidth) / 2;
                 page.drawImage(signatureImageEmbed, {
-                    x,
+                    x: imageX,
                     y: imageY,
                     width: scaledWidth,
                     height: scaledHeight,

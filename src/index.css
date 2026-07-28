@@ -508,14 +508,14 @@ body {
 
 /* Stamp Preview Box */
 .stamp-preview-box {
-  background: transparent;
-  color: var(--text-primary);
+  background: white;
+  color: #0f172a;
   padding: 1rem 1.25rem;
   border-radius: var(--border-radius-sm);
-  border: 1.5px dashed var(--card-border);
+  border: 1.5px dashed rgba(15, 23, 42, 0.15);
   display: flex;
   flex-direction: column;
-  align-items: flex-end; /* Right-align to match PDF output */
+  align-items: center; /* Center-align elements inside */
   justify-content: center;
   max-width: 180px;
   width: 100%;
@@ -537,8 +537,8 @@ body {
   font-family: 'Helvetica', system-ui, -apple-system, sans-serif;
   font-size: 0.7rem;
   line-height: 1.35;
-  color: var(--text-secondary);
-  text-align: right;
+  color: #334155;
+  text-align: center; /* Center text alignment */
   width: 100%;
 }
 
