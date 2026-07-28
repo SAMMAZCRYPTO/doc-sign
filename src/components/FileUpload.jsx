@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from 'react';
-import { Upload, FilePlus, ImagePlus, X } from 'lucide-react';
+import { Upload, FilePlus, ImagePlus, X, Settings } from 'lucide-react';
 
-export default function FileUpload({ onPdfUpload, onSignatureUpload, signatureImage }) {
+export default function FileUpload({ onPdfUpload, onSignatureUpload, signatureImage, generateSheetEnabled, onToggleGenerateSheet }) {
     const [isDraggingPdf, setIsDraggingPdf] = useState(false);
     const [isDraggingSig, setIsDraggingSig] = useState(false);
 
@@ -129,6 +129,31 @@ export default function FileUpload({ onPdfUpload, onSignatureUpload, signatureIm
                         />
                     </div>
                 )}
+            </div>
+
+            <div className="glass-panel card animate-fade-in" style={{ animationDelay: '0.35s' }}>
+                <h2 className="card-title">
+                    <Settings />
+                    Processing Options
+                </h2>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    <label className="toggle-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', paddingRight: '1rem' }}>
+                            <span style={{ fontWeight: 500, fontSize: '0.95rem' }}>Comment Resolution Sheet</span>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Scan for comments and prepend a resolution table page</span>
+                        </div>
+                        <div className="toggle-switch-wrapper">
+                            <input
+                                type="checkbox"
+                                id="toggle-sheet"
+                                checked={generateSheetEnabled}
+                                onChange={(e) => onToggleGenerateSheet(e.target.checked)}
+                                className="toggle-checkbox"
+                            />
+                            <span className="toggle-slider"></span>
+                        </div>
+                    </label>
+                </div>
             </div>
         </>
     );
