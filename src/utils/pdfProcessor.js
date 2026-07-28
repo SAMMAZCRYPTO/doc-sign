@@ -92,63 +92,95 @@ export async function extractCommentsFromPDF(pdfBuffer) {
                 const subtype = annotDict.get(PDFName.of('Subtype'));
                 const subtypeStr = subtype ? subtype.toString() : '';
 
-                // Ignore links, widgets, popups, etc.
-                if (['/Popup', '/Link', '/Widget'].includes(subtypeStr)) {
-                    continue;
+                // Ignore links, widgets, popups
+                if (['/Popup', '/Link', '/Widget'].includes(subtypeStr)) continue;
+
+                // ── Helper: decode a PDFString/PDFHexString to plain text ──────
+                const decodeStr = (obj) => {
+                    if (!obj) return '';
+                    if (obj instanceof PDFString || obj instanceof PDFHexString) return obj.decodeText();
+                    if (typeof obj.decodeText === 'function') return obj.decodeText();
+                    return obj.toString().replace(/^[\/(<]|[>)]$/g, '');
+                };
+
+                // ── Extract standard text fields ─────────────────────────────
+                const contentsObj = annotDict.get(PDFName.of('Contents'));
+                const text = sanitizeTextForWinAnsi(decodeStr(contentsObj).trim());
+
+                const authorObj = annotDict.get(PDFName.of('T'));
+                const author = sanitizeTextForWinAnsi(decodeStr(authorObj).trim()) || 'Anonymous';
+
+                const rectObj = annotDict.get(PDFName.of('Rect'));
+                let rect = null;
+                if (rectObj) {
+                    const lookupRect = pdfDoc.context.lookup(rectObj);
+                    if (lookupRect && typeof lookupRect.asArray === 'function') {
+                        rect = lookupRect.asArray().map(v =>
+                            typeof v.asNumber === 'function' ? v.asNumber() : (v.value !== undefined ? v.value : Number(v))
+                        );
+                    }
                 }
 
-                const contents = annotDict.get(PDFName.of('Contents'));
-                if (contents) {
-                    let text = '';
-                    if (contents instanceof PDFString || contents instanceof PDFHexString) {
-                        text = contents.decodeText();
-                    } else if (typeof contents.decodeText === 'function') {
-                        text = contents.decodeText();
-                    } else {
-                        text = contents.toString();
-                    }
+                // ── FileAttachment: extract embedded image bytes ─────────────
+                let attachmentBytes = null;
+                let attachmentName = '';
+                let attachmentMime = '';
 
-                    if (text && text.trim()) {
-                        // Extract author (/T) if present
-                        const authorObj = annotDict.get(PDFName.of('T'));
-                        let author = '';
-                        if (authorObj) {
-                            if (authorObj instanceof PDFString || authorObj instanceof PDFHexString) {
-                                author = authorObj.decodeText();
-                            } else if (typeof authorObj.decodeText === 'function') {
-                                author = authorObj.decodeText();
-                            } else {
-                                author = authorObj.toString();
+                if (subtypeStr === '/FileAttachment') {
+                    try {
+                        const fsObj = annotDict.get(PDFName.of('FS'));
+                        const fsDict = fsObj ? pdfDoc.context.lookup(fsObj) : null;
+                        if (fsDict) {
+                            // Get filename for mime detection
+                            const fnObj = fsDict.get(PDFName.of('F')) || fsDict.get(PDFName.of('UF'));
+                            attachmentName = decodeStr(fnObj).toLowerCase();
+
+                            const efDict = fsDict.get(PDFName.of('EF'));
+                            const efResolved = efDict ? pdfDoc.context.lookup(efDict) : null;
+                            if (efResolved) {
+                                const streamRef = efResolved.get(PDFName.of('F')) ||
+                                                  efResolved.get(PDFName.of('UF')) ||
+                                                  efResolved.entries().next().value?.[1];
+                                const streamObj = streamRef ? pdfDoc.context.lookup(streamRef) : null;
+                                if (streamObj && (streamObj instanceof PDFRawStream || streamObj.constructor.name === 'PDFRawStream')) {
+                                    // Determine mime from filename extension
+                                    if (/\.jpe?g$/i.test(attachmentName)) attachmentMime = 'image/jpeg';
+                                    else if (/\.png$/i.test(attachmentName))  attachmentMime = 'image/png';
+                                    else if (/\.gif$/i.test(attachmentName))  attachmentMime = 'image/gif';
+                                    else if (/\.bmp$/i.test(attachmentName))  attachmentMime = 'image/bmp';
+                                    else if (/\.webp$/i.test(attachmentName)) attachmentMime = 'image/webp';
+
+                                    if (attachmentMime) {
+                                        // Decode stream (handles FlateDecode wrapping)
+                                        try {
+                                            attachmentBytes = decodePDFRawStream(streamObj).decode();
+                                        } catch (_) {
+                                            attachmentBytes = streamObj.contents;
+                                        }
+                                    }
+                                }
                             }
                         }
-
-                        // Extract visual bounding box (/Rect) if present
-                        const rectObj = annotDict.get(PDFName.of('Rect'));
-                        let rect = null;
-                        if (rectObj) {
-                            const lookupRect = pdfDoc.context.lookup(rectObj);
-                            if (lookupRect && typeof lookupRect.asArray === 'function') {
-                                rect = lookupRect.asArray().map(v => {
-                                    return typeof v.asNumber === 'function' 
-                                        ? v.asNumber() 
-                                        : (v.value !== undefined ? v.value : Number(v));
-                                });
-                            }
-                        }
-
-                        comments.push({
-                            page: pageNum,
-                            subtype: subtypeStr.replace('/', ''),
-                            text: sanitizeTextForWinAnsi(text.trim()),
-                            author: sanitizeTextForWinAnsi(author.trim()) || 'Anonymous',
-                            rect: rect
-                        });
+                    } catch (attachErr) {
+                        console.warn('Could not extract attachment:', attachErr.message);
                     }
+                }
+
+                // ── Only record if there is text OR an image attachment ───────
+                if (text || attachmentBytes) {
+                    comments.push({
+                        page: pageNum,
+                        subtype: subtypeStr.replace('/', ''),
+                        text: text || (attachmentName ? `[Attached: ${attachmentName}]` : '[Image Attachment]'),
+                        author,
+                        rect,
+                        attachmentBytes,   // Uint8Array | null
+                        attachmentMime,    // 'image/jpeg' | 'image/png' | '' | null
+                    });
                 }
             }
         }
-        
-        // Sort comments by page number
+
         return comments.sort((a, b) => a.page - b.page);
     } catch (e) {
         console.error('Error extracting comments:', e);
@@ -362,11 +394,54 @@ async function generateCommentResolutionSheet(pdfDoc, comments) {
         for (let index = 0; index < comments.length; index++) {
             const comment = comments[index];
             const lines2Text = wrapText(comment.text, colWidths[1] - 12, helvetica, 8);
-            
+
+            // Try to embed attachment image for this comment
+            let embeddedImg = null;
+            let imgDrawW = 0, imgDrawH = 0;
+            const IMG_MAX_W = colWidths[1] - 14;
+            const IMG_MAX_H = 80;
+            if (comment.attachmentBytes && comment.attachmentMime) {
+                try {
+                    if (comment.attachmentMime === 'image/jpeg' || comment.attachmentMime === 'image/jpg') {
+                        embeddedImg = await pdfDoc.embedJpg(comment.attachmentBytes);
+                    } else if (comment.attachmentMime === 'image/png') {
+                        embeddedImg = await pdfDoc.embedPng(comment.attachmentBytes);
+                    } else {
+                        // Convert via canvas to JPEG for other types (gif, bmp, webp)
+                        const blob = new Blob([comment.attachmentBytes], { type: comment.attachmentMime });
+                        const url = URL.createObjectURL(blob);
+                        const jpegBytes = await new Promise((res) => {
+                            const img2 = new Image();
+                            img2.onload = () => {
+                                URL.revokeObjectURL(url);
+                                const cv = document.createElement('canvas');
+                                cv.width = img2.naturalWidth; cv.height = img2.naturalHeight;
+                                cv.getContext('2d').drawImage(img2, 0, 0);
+                                cv.toBlob(b => b ? b.arrayBuffer().then(ab => res(new Uint8Array(ab))).catch(() => res(null)) : res(null), 'image/jpeg', 0.85);
+                            };
+                            img2.onerror = () => { URL.revokeObjectURL(url); res(null); };
+                            img2.src = url;
+                        });
+                        if (jpegBytes) embeddedImg = await pdfDoc.embedJpg(jpegBytes);
+                    }
+
+                    if (embeddedImg) {
+                        const nat = embeddedImg.size();
+                        const scale = Math.min(IMG_MAX_W / nat.width, IMG_MAX_H / nat.height, 1);
+                        imgDrawW = nat.width  * scale;
+                        imgDrawH = nat.height * scale;
+                    }
+                } catch (imgErr) {
+                    console.warn('Could not embed attachment image in sheet:', imgErr.message);
+                    embeddedImg = null;
+                }
+            }
+
             // Calculate cell and row heights
-            const minRowHeight = 70; // Provide enough blank space for responses
-            const commentTextHeight = (lines2Text.length * 10) + 25; // 25pt for padding/author line
-            const rowHeight = Math.max(minRowHeight, commentTextHeight);
+            const minRowHeight = 70;
+            const commentTextHeight = (lines2Text.length * 10) + 25;
+            const imgHeight = embeddedImg ? imgDrawH + 10 : 0;
+            const rowHeight = Math.max(minRowHeight, commentTextHeight + imgHeight);
 
             // Check if page break is needed
             if (!currentPage || (currentY - rowHeight < bottomMargin)) {
@@ -376,62 +451,41 @@ async function generateCommentResolutionSheet(pdfDoc, comments) {
             // Alternating backgrounds
             const rowBg = index % 2 === 0 ? rgb(1, 1, 1) : rgb(0.98, 0.98, 0.99);
             currentPage.drawRectangle({
-                x: margin,
-                y: currentY - rowHeight,
-                width: printableWidth,
-                height: rowHeight,
-                color: rowBg,
+                x: margin, y: currentY - rowHeight,
+                width: printableWidth, height: rowHeight, color: rowBg,
             });
 
-            // Draw Column 1: Ref / Page (Underlined blue hyperlink to original comment)
+            // Column 1: Ref / Page
             const targetPageRef = originalPageRefs[comment.page - 1];
             const pageText = `Page ${comment.page}`;
             const linkColor = rgb(0.1, 0.45, 0.88);
 
             currentPage.drawText(pageText, {
-                x: colPositions[0] + 6,
-                y: currentY - 18,
-                size: 8.5,
-                font: helveticaBold,
-                color: linkColor,
+                x: colPositions[0] + 6, y: currentY - 18,
+                size: 8.5, font: helveticaBold, color: linkColor,
             });
-
-            // Underline
             const textWidth = helveticaBold.widthOfTextAtSize(pageText, 8.5);
             currentPage.drawLine({
                 start: { x: colPositions[0] + 6, y: currentY - 19.5 },
-                end: { x: colPositions[0] + 6 + textWidth, y: currentY - 19.5 },
-                thickness: 0.5,
-                color: linkColor,
+                end:   { x: colPositions[0] + 6 + textWidth, y: currentY - 19.5 },
+                thickness: 0.5, color: linkColor,
             });
-
             currentPage.drawText(`#${index + 1}`, {
-                x: colPositions[0] + 6,
-                y: currentY - 30,
-                size: 8,
-                font: helvetica,
-                color: rgb(0.47, 0.55, 0.67),
+                x: colPositions[0] + 6, y: currentY - 30,
+                size: 8, font: helvetica, color: rgb(0.47, 0.55, 0.67),
             });
 
-            // Create and register GoTo page annotation
+            // GoTo link annotation
             if (targetPageRef) {
                 const linkAnnotation = pdfDoc.context.obj({
-                    Type: 'Annot',
-                    Subtype: 'Link',
-                    Rect: [
-                        colPositions[0],
-                        currentY - rowHeight,
-                        colPositions[0] + colWidths[0],
-                        currentY
-                    ],
+                    Type: 'Annot', Subtype: 'Link',
+                    Rect: [colPositions[0], currentY - rowHeight, colPositions[0] + colWidths[0], currentY],
                     Border: [0, 0, 0],
-                    Dest: comment.rect 
+                    Dest: comment.rect
                         ? [targetPageRef, 'XYZ', comment.rect[0] - 20, comment.rect[3] + 20, null]
                         : [targetPageRef, 'XYZ', null, null, null],
                 });
-
                 const linkRef = pdfDoc.context.register(linkAnnotation);
-
                 if (!currentPage.node.has(PDFName.of('Annots'))) {
                     currentPage.node.set(PDFName.of('Annots'), pdfDoc.context.obj([]));
                 }
@@ -439,44 +493,50 @@ async function generateCommentResolutionSheet(pdfDoc, comments) {
                 annots.push(linkRef);
             }
 
-            // Draw Column 2: Comment Details (Author + Text)
+            // Column 2: Comment Details (Author + Text + optional image)
             currentPage.drawText(`By: ${comment.author}`, {
-                x: colPositions[1] + 6,
-                y: currentY - 15,
-                size: 8,
-                font: helveticaBold,
-                color: rgb(0.09, 0.14, 0.25),
+                x: colPositions[1] + 6, y: currentY - 15,
+                size: 8, font: helveticaBold, color: rgb(0.09, 0.14, 0.25),
             });
 
             let textY = currentY - 26;
             for (const line of lines2Text) {
                 currentPage.drawText(line, {
-                    x: colPositions[1] + 6,
-                    y: textY,
-                    size: 8,
-                    font: helvetica,
-                    color: rgb(0.2, 0.27, 0.38),
+                    x: colPositions[1] + 6, y: textY,
+                    size: 8, font: helvetica, color: rgb(0.2, 0.27, 0.38),
                 });
                 textY -= 10;
             }
 
-            // Draw grid borders for current row
-            // Bottom line
+            // Draw embedded image below the text if present
+            if (embeddedImg) {
+                const imgX = colPositions[1] + 6;
+                const imgY = textY - imgDrawH - 4;
+                // Light border around the image
+                currentPage.drawRectangle({
+                    x: imgX - 1, y: imgY - 1,
+                    width: imgDrawW + 2, height: imgDrawH + 2,
+                    borderColor: rgb(0.75, 0.78, 0.84), borderWidth: 0.5,
+                    color: rgb(1, 1, 1),
+                });
+                currentPage.drawImage(embeddedImg, {
+                    x: imgX, y: imgY,
+                    width: imgDrawW, height: imgDrawH,
+                });
+            }
+
+            // Row borders
             currentPage.drawLine({
                 start: { x: margin, y: currentY - rowHeight },
-                end: { x: margin + printableWidth, y: currentY - rowHeight },
-                thickness: 0.5,
-                color: rgb(0.8, 0.82, 0.86),
+                end:   { x: margin + printableWidth, y: currentY - rowHeight },
+                thickness: 0.5, color: rgb(0.8, 0.82, 0.86),
             });
-
-            // Vertical borders
             for (let j = 0; j <= 4; j++) {
                 const x = j === 4 ? margin + printableWidth : colPositions[j];
                 currentPage.drawLine({
                     start: { x, y: currentY },
-                    end: { x, y: currentY - rowHeight },
-                    thickness: 0.5,
-                    color: rgb(0.8, 0.82, 0.86),
+                    end:   { x, y: currentY - rowHeight },
+                    thickness: 0.5, color: rgb(0.8, 0.82, 0.86),
                 });
             }
 
