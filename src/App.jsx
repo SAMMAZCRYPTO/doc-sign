@@ -1,8 +1,8 @@
 import React, { useState, useCallback } from 'react';
-import { FileSignature, MessageSquare, X, Upload, FilePlus, Settings } from 'lucide-react';
+import { FileSignature, MessageSquare, X, Upload, FilePlus, Settings, Minimize2 } from 'lucide-react';
 import FileUpload from './components/FileUpload';
 import DocumentList from './components/DocumentList';
-import { processSignedPDF, extractCommentsFromPDF } from './utils/pdfProcessor';
+import { processSignedPDF, extractCommentsFromPDF, compressPDF } from './utils/pdfProcessor';
 
 function App() {
   const [pdfFiles, setPdfFiles] = useState([]);
@@ -18,6 +18,9 @@ function App() {
   const [stampSize, setStampSize] = useState('medium');
   const [activeTab, setActiveTab] = useState('signature');
   const [isDraggingPdf, setIsDraggingPdf] = useState(false);
+  const [pageSelectionType, setPageSelectionType] = useState('all');
+  const [customPageRange, setCustomPageRange] = useState('');
+  const [compressEnabled, setCompressEnabled] = useState(false);
 
   const handlePdfUpload = async (files) => {
     // Append new files
@@ -59,7 +62,7 @@ function App() {
   };
 
   const handleProcess = async () => {
-    if (pdfFiles.length === 0 || (!signatureImage && !generateSheetEnabled && !signerName && !signerDate)) return;
+    if (pdfFiles.length === 0 || (!signatureImage && !generateSheetEnabled && !signerName && !signerDate && !compressEnabled)) return;
 
     setProcessing(true);
     const results = [];
@@ -74,17 +77,31 @@ function App() {
           const sigType = signatureImage ? signatureImage.type : null;
           const pdfBuffer = await file.arrayBuffer();
 
-          const processedPdfBytes = await processSignedPDF(pdfBuffer, sigBuffer, sigType, {
+          let processedPdfBytes = await processSignedPDF(pdfBuffer, sigBuffer, sigType, {
             generateResolutionSheet: generateSheetEnabled,
             signerName: signerName,
             signerDate: signerDate,
             stampAlignment: stampAlignment,
-            stampSize: stampSize
+            stampSize: stampSize,
+            pageSelectionType: pageSelectionType,
+            customPageRange: customPageRange
           });
+
+          if (compressEnabled) {
+            processedPdfBytes = await compressPDF(processedPdfBytes);
+          }
 
           const hasSignatureBlock = signatureImage || signerName || signerDate;
           let namePrefix = 'Processed_';
-          if (hasSignatureBlock && generateSheetEnabled) {
+          if (compressEnabled && hasSignatureBlock && generateSheetEnabled) {
+            namePrefix = 'Compressed_Signed_CRS_';
+          } else if (compressEnabled && hasSignatureBlock) {
+            namePrefix = 'Compressed_Signed_';
+          } else if (compressEnabled && generateSheetEnabled) {
+            namePrefix = 'Compressed_CRS_';
+          } else if (compressEnabled) {
+            namePrefix = 'Compressed_';
+          } else if (hasSignatureBlock && generateSheetEnabled) {
             namePrefix = 'Signed_CRS_';
           } else if (hasSignatureBlock) {
             namePrefix = 'Signed_';
@@ -188,6 +205,18 @@ function App() {
             </div>
             <span className={`tab-indicator ${generateSheetEnabled ? 'enabled' : ''}`}></span>
           </button>
+
+          <button
+            className={`sidebar-tab ${activeTab === 'compress' ? 'active' : ''}`}
+            onClick={() => setActiveTab('compress')}
+          >
+            <Minimize2 size={18} />
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Compress PDF</span>
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Reduce file size drastically</span>
+            </div>
+            <span className={`tab-indicator ${compressEnabled ? 'enabled' : ''}`}></span>
+          </button>
         </aside>
 
         <main className="workspace-content animate-fade-in" style={{ animationDelay: '0.15s' }}>
@@ -204,8 +233,14 @@ function App() {
               onStampAlignmentChange={setStampAlignment}
               stampSize={stampSize}
               onStampSizeChange={setStampSize}
+              pageSelectionType={pageSelectionType}
+              onPageSelectionTypeChange={setPageSelectionType}
+              customPageRange={customPageRange}
+              onCustomPageRangeChange={setCustomPageRange}
               generateSheetEnabled={generateSheetEnabled}
               onToggleGenerateSheet={setGenerateSheetEnabled}
+              compressEnabled={compressEnabled}
+              onToggleCompress={setCompressEnabled}
             />
           </div>
 
@@ -252,7 +287,7 @@ function App() {
                   className="btn btn-primary"
                   style={{ width: '100%' }}
                   onClick={handleProcess}
-                  disabled={pdfFiles.length === 0 || (!signatureImage && !generateSheetEnabled && !signerName && !signerDate) || processing}
+                  disabled={pdfFiles.length === 0 || (!signatureImage && !generateSheetEnabled && !signerName && !signerDate && !compressEnabled) || processing}
                 >
                   {processing ? (
                     <>
@@ -261,12 +296,20 @@ function App() {
                   ) : (
                     <>
                       <FileSignature size={20} />
-                      {(signatureImage || signerName || signerDate) && generateSheetEnabled ? (
+                      {(signatureImage || signerName || signerDate) && generateSheetEnabled && compressEnabled ? (
+                        `Sign, Add Sheets & Compress (${pdfFiles.length})`
+                      ) : (signatureImage || signerName || signerDate) && generateSheetEnabled ? (
                         `Sign & Add Sheets (${pdfFiles.length})`
+                      ) : (signatureImage || signerName || signerDate) && compressEnabled ? (
+                        `Sign & Compress (${pdfFiles.length})`
                       ) : (signatureImage || signerName || signerDate) ? (
                         `Sign Documents (${pdfFiles.length})`
+                      ) : generateSheetEnabled && compressEnabled ? (
+                        `Add Sheets & Compress (${pdfFiles.length})`
                       ) : generateSheetEnabled ? (
                         `Generate Sheets (${pdfFiles.length})`
+                      ) : compressEnabled ? (
+                        `Compress Documents (${pdfFiles.length})`
                       ) : (
                         `Process Documents (${pdfFiles.length})`
                       )}

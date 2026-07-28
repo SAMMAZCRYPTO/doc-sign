@@ -13,8 +13,14 @@ export default function FileUpload({
     onStampAlignmentChange,
     stampSize,
     onStampSizeChange,
+    pageSelectionType,
+    onPageSelectionTypeChange,
+    customPageRange,
+    onCustomPageRangeChange,
     generateSheetEnabled, 
-    onToggleGenerateSheet 
+    onToggleGenerateSheet,
+    compressEnabled,
+    onToggleCompress
 }) {
     const [isDraggingSig, setIsDraggingSig] = useState(false);
 
@@ -198,6 +204,51 @@ export default function FileUpload({
                     )}
                 </div>
 
+                <div style={{ borderTop: '1px solid var(--card-border)', paddingTop: '1.25rem', marginTop: '0.5rem', marginBottom: '1.5rem' }}>
+                    <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-primary)', fontWeight: 600, marginBottom: '0.75rem' }}>
+                        Target Pages
+                    </label>
+                    <div style={{ display: 'flex', background: 'rgba(255, 255, 255, 0.03)', padding: '0.2rem', borderRadius: 'var(--border-radius-sm)', border: '1px solid var(--card-border)', marginBottom: pageSelectionType === 'custom' ? '0.75rem' : '0' }}>
+                        {['all', 'odd', 'even', 'custom'].map((type) => (
+                            <button
+                                key={type}
+                                type="button"
+                                onClick={() => onPageSelectionTypeChange(type)}
+                                style={{
+                                    flex: 1,
+                                    padding: '0.4rem',
+                                    background: pageSelectionType === type ? 'var(--accent-gradient)' : 'transparent',
+                                    color: pageSelectionType === type ? 'white' : 'var(--text-secondary)',
+                                    border: 'none',
+                                    borderRadius: 'var(--border-radius-sm)',
+                                    cursor: 'pointer',
+                                    fontSize: '0.8rem',
+                                    textTransform: 'capitalize',
+                                    fontWeight: 500,
+                                    transition: 'var(--transition)'
+                                }}
+                            >
+                                {type}
+                            </button>
+                        ))}
+                    </div>
+                    {pageSelectionType === 'custom' && (
+                        <div className="input-group animate-fade-in" style={{ marginTop: '0.5rem' }}>
+                            <input
+                                type="text"
+                                placeholder="e.g. 1-3, 5, 7-9"
+                                value={customPageRange}
+                                onChange={(e) => onCustomPageRangeChange(e.target.value)}
+                                className="input-field"
+                                style={{ width: '100%' }}
+                            />
+                            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                                Specify pages (1-based) from original documents. Separate groups with commas.
+                            </span>
+                        </div>
+                    )}
+                </div>
+
                 <div>
                     <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 500, marginBottom: '0.5rem' }}>
                         Signature Block Preview
@@ -243,6 +294,35 @@ export default function FileUpload({
                                 id="toggle-sheet"
                                 checked={generateSheetEnabled}
                                 onChange={(e) => onToggleGenerateSheet(e.target.checked)}
+                                className="toggle-checkbox"
+                            />
+                            <span className="toggle-slider"></span>
+                        </div>
+                    </label>
+                </div>
+            </div>
+        );
+    }
+
+    if (activeTab === 'compress') {
+        return (
+            <div className="glass-panel card animate-fade-in" style={{ animationDelay: '0.1s' }}>
+                <h2 className="card-title">
+                    <Settings />
+                    PDF Compression Settings
+                </h2>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    <label className="toggle-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', paddingRight: '1rem' }}>
+                            <span style={{ fontWeight: 500, fontSize: '0.95rem' }}>Enable Compression</span>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Pack objects and serialize stream data to drastically minimize file sizes</span>
+                        </div>
+                        <div className="toggle-switch-wrapper">
+                            <input
+                                type="checkbox"
+                                id="toggle-compress"
+                                checked={compressEnabled}
+                                onChange={(e) => onToggleCompress(e.target.checked)}
                                 className="toggle-checkbox"
                             />
                             <span className="toggle-slider"></span>

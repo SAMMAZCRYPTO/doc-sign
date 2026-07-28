@@ -508,6 +508,44 @@ async function generateCommentResolutionSheet(pdfDoc, comments) {
  * @param {object} options - Options object, e.g. { generateResolutionSheet: boolean }
  * @returns {Promise<Uint8Array>} - The processed PDF as a byte array
  */
+/**
+ * Helper to parse custom page ranges (e.g. "1-3, 5, 8-10") into an array of page numbers.
+ * Page numbers are 1-based.
+ */
+export function parsePageRange(rangeStr, totalPages) {
+    const pagesSet = new Set();
+    if (!rangeStr) return [];
+    
+    const cleanStr = rangeStr.replace(/\s+/g, '');
+    const parts = cleanStr.split(',');
+
+    for (const part of parts) {
+        if (!part) continue;
+        
+        if (part.includes('-')) {
+            const [startStr, endStr] = part.split('-');
+            const start = parseInt(startStr, 10);
+            const end = parseInt(endStr, 10);
+            
+            if (!isNaN(start) && !isNaN(end)) {
+                const s = Math.min(start, end);
+                const e = Math.max(start, end);
+                for (let i = s; i <= e; i++) {
+                    if (i >= 1 && i <= totalPages) {
+                        pagesSet.add(i);
+                    }
+                }
+            }
+        } else {
+            const num = parseInt(part, 10);
+            if (!isNaN(num) && num >= 1 && num <= totalPages) {
+                pagesSet.add(num);
+            }
+        }
+    }
+    return Array.from(pagesSet).sort((a, b) => a - b);
+}
+
 export async function processSignedPDF(pdfBuffer, signatureBuffer, signatureType, options = {}) {
     // Load the PDF
     const pdfDoc = await PDFDocument.load(pdfBuffer);
@@ -568,11 +606,36 @@ export async function processSignedPDF(pdfBuffer, signatureBuffer, signatureType
         const textBlockHeight = textLines.length * lineHeight;
         const totalBlockHeight = scaledHeight + spacing + textBlockHeight;
 
-        // Add signature to each of the ORIGINAL pages
+        // Add signature to targeted ORIGINAL pages
         const pages = pdfDoc.getPages();
-        // Since sheet pages were inserted at the beginning, we start signing from sheetPagesCount
-        for (let i = sheetPagesCount; i < pages.length; i++) {
-            const page = pages[i];
+        const originalPagesCount = pages.length - sheetPagesCount;
+
+        // Determine which 1-based original page numbers to sign
+        const targetPages = [];
+        if (options.pageSelectionType === 'odd') {
+            for (let p = 1; p <= originalPagesCount; p++) {
+                if (p % 2 !== 0) targetPages.push(p);
+            }
+        } else if (options.pageSelectionType === 'even') {
+            for (let p = 1; p <= originalPagesCount; p++) {
+                if (p % 2 === 0) targetPages.push(p);
+            }
+        } else if (options.pageSelectionType === 'custom' && options.customPageRange) {
+            const parsed = parsePageRange(options.customPageRange, originalPagesCount);
+            targetPages.push(...parsed);
+        } else {
+            // Default: 'all'
+            for (let p = 1; p <= originalPagesCount; p++) {
+                targetPages.push(p);
+            }
+        }
+
+        // Draw signature/stamp on the target pages
+        for (const p of targetPages) {
+            const pageIndex = sheetPagesCount + p - 1;
+            if (pageIndex < 0 || pageIndex >= pages.length) continue;
+
+            const page = pages[pageIndex];
             const size = page.getSize();
             const W = size.width;
             const H = size.height;
@@ -680,4 +743,17 @@ export async function processSignedPDF(pdfBuffer, signatureBuffer, signatureType
     // Serialize the PDFDocument to bytes (a Uint8Array)
     return await pdfDoc.save();
 }
+
+/**
+ * Compresses an existing PDF buffer by performing garbage collection,
+ * compressing stream data, and serialization packing.
+ * 
+ * @param {ArrayBuffer} pdfBuffer - The input PDF buffer
+ * @returns {Promise<Uint8Array>} - Compressed PDF bytes
+ */
+export async function compressPDF(pdfBuffer) {
+    const pdfDoc = await PDFDocument.load(pdfBuffer);
+    return await pdfDoc.save({ useObjectStreams: true });
+}
+
 
