@@ -1,7 +1,17 @@
 import React, { useCallback, useState } from 'react';
 import { Upload, FilePlus, ImagePlus, X, Settings } from 'lucide-react';
 
-export default function FileUpload({ onPdfUpload, onSignatureUpload, signatureImage, generateSheetEnabled, onToggleGenerateSheet }) {
+export default function FileUpload({ 
+    onPdfUpload, 
+    onSignatureUpload, 
+    signatureImage, 
+    signerName, 
+    onSignerNameChange, 
+    signerDate, 
+    onSignerDateChange, 
+    generateSheetEnabled, 
+    onToggleGenerateSheet 
+}) {
     const [isDraggingPdf, setIsDraggingPdf] = useState(false);
     const [isDraggingSig, setIsDraggingSig] = useState(false);
 
@@ -90,45 +100,108 @@ export default function FileUpload({ onPdfUpload, onSignatureUpload, signatureIm
             <div className="glass-panel card animate-fade-in" style={{ animationDelay: '0.3s' }}>
                 <h2 className="card-title">
                     <ImagePlus />
-                    {signatureImage ? 'Your Signature' : 'Upload Signature'}
+                    Signature & Stamp Setup
                 </h2>
 
-                {signatureImage ? (
-                    <div className="signature-preview glass-panel">
-                        <div className="flex-center" style={{ justifyContent: 'space-between', padding: '0.5rem 1rem', borderBottom: '1px solid var(--card-border)' }}>
-                            <span className="file-name" style={{ fontSize: '0.875rem' }}>{signatureImage.name}</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
+                    <div className="input-group">
+                        <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 500, marginBottom: '0.25rem' }}>Signer Name</label>
+                        <input
+                            type="text"
+                            placeholder="Enter name to display below signature"
+                            value={signerName}
+                            onChange={(e) => onSignerNameChange(e.target.value)}
+                            className="input-field"
+                        />
+                    </div>
+
+                    <div className="input-group">
+                        <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 500, marginBottom: '0.25rem' }}>Signature Date</label>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            <input
+                                type="date"
+                                value={signerDate}
+                                onChange={(e) => onSignerDateChange(e.target.value)}
+                                className="input-field"
+                                style={{ flex: 1 }}
+                            />
+                            <button
+                                type="button"
+                                className="btn btn-secondary"
+                                style={{ padding: '0 1rem', fontSize: '0.85rem' }}
+                                onClick={() => {
+                                    const today = new Date().toISOString().split('T')[0];
+                                    onSignerDateChange(today);
+                                }}
+                            >
+                                Today
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div style={{ marginBottom: '1.5rem' }}>
+                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 500, marginBottom: '0.5rem' }}>
+                        Signature/Stamp Image (Optional)
+                    </label>
+                    {signatureImage ? (
+                        <div className="flex-center" style={{ justifyContent: 'space-between', padding: '0.75rem 1rem', background: 'rgba(255,255,255,0.05)', borderRadius: 'var(--border-radius-sm)', border: '1px solid var(--card-border)' }}>
+                            <span className="file-name" style={{ fontSize: '0.85rem', maxWidth: '70%', overflow: 'hidden', textOverflow: 'ellipsis' }} title={signatureImage.name}>
+                                {signatureImage.name}
+                            </span>
                             <button
                                 className="file-remove"
                                 onClick={() => onSignatureUpload(null)}
-                                title="Remove signature"
+                                title="Remove signature image"
+                                style={{ padding: '0.25rem' }}
                             >
                                 <X size={16} />
                             </button>
                         </div>
-                        <div style={{ padding: '1.5rem' }}>
-                            <img src={URL.createObjectURL(signatureImage)} alt="Signature Preview" />
+                    ) : (
+                        <div
+                            className={`dropzone ${isDraggingSig ? 'active' : ''}`}
+                            onDragOver={(e) => handleDragOver(e, setIsDraggingSig)}
+                            onDragLeave={(e) => handleDragLeave(e, setIsDraggingSig)}
+                            onDrop={handleSigDrop}
+                            onClick={() => document.getElementById('sig-upload').click()}
+                            style={{ padding: '1.5rem 1rem' }}
+                        >
+                            <Upload className="dropzone-icon" style={{ width: '32px', height: '32px', marginBottom: '0.25rem' }} />
+                            <p className="dropzone-subtitle" style={{ margin: 0, fontSize: '0.8rem' }}>Drag & drop image here or click to browse</p>
+                            <input
+                                type="file"
+                                id="sig-upload"
+                                accept="image/*"
+                                style={{ display: 'none' }}
+                                onChange={handleSigUploadClick}
+                            />
                         </div>
+                    )}
+                </div>
+
+                <div>
+                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 500, marginBottom: '0.5rem' }}>
+                        Signature Block Preview
+                    </label>
+                    <div className="stamp-preview-box">
+                        {signatureImage ? (
+                            <img src={URL.createObjectURL(signatureImage)} alt="Signature Image" className="stamp-preview-image" />
+                        ) : (
+                            (!signerName && !signerDate) && (
+                                <div style={{ opacity: 0.4, fontSize: '0.85rem', fontStyle: 'italic', width: '100%', textAlign: 'center', margin: 'auto' }}>
+                                    No signature image or details entered.
+                                </div>
+                            )
+                        )}
+                        {(signerName || signerDate) && (
+                            <div className="stamp-preview-text">
+                                {signerName && <div style={{ fontWeight: 600 }}>Name: {signerName}</div>}
+                                {signerDate && <div>Date: {signerDate}</div>}
+                            </div>
+                        )}
                     </div>
-                ) : (
-                    <div
-                        className={`dropzone ${isDraggingSig ? 'active' : ''}`}
-                        onDragOver={(e) => handleDragOver(e, setIsDraggingSig)}
-                        onDragLeave={(e) => handleDragLeave(e, setIsDraggingSig)}
-                        onDrop={handleSigDrop}
-                        onClick={() => document.getElementById('sig-upload').click()}
-                    >
-                        <Upload className="dropzone-icon" />
-                        <h3 className="dropzone-title">Drop signature image</h3>
-                        <p className="dropzone-subtitle">PNG format recommended for transparency</p>
-                        <input
-                            type="file"
-                            id="sig-upload"
-                            accept="image/*"
-                            style={{ display: 'none' }}
-                            onChange={handleSigUploadClick}
-                        />
-                    </div>
-                )}
+                </div>
             </div>
 
             <div className="glass-panel card animate-fade-in" style={{ animationDelay: '0.35s' }}>

@@ -12,6 +12,8 @@ function App() {
   const [detectedComments, setDetectedComments] = useState({});
   const [generateSheetEnabled, setGenerateSheetEnabled] = useState(false);
   const [previewCommentsFile, setPreviewCommentsFile] = useState(null);
+  const [signerName, setSignerName] = useState('');
+  const [signerDate, setSignerDate] = useState('');
 
   const handlePdfUpload = async (files) => {
     // Append new files
@@ -53,7 +55,7 @@ function App() {
   };
 
   const handleProcess = async () => {
-    if (pdfFiles.length === 0 || (!signatureImage && !generateSheetEnabled)) return;
+    if (pdfFiles.length === 0 || (!signatureImage && !generateSheetEnabled && !signerName && !signerDate)) return;
 
     setProcessing(true);
     const results = [];
@@ -69,13 +71,16 @@ function App() {
           const pdfBuffer = await file.arrayBuffer();
 
           const processedPdfBytes = await processSignedPDF(pdfBuffer, sigBuffer, sigType, {
-            generateResolutionSheet: generateSheetEnabled
+            generateResolutionSheet: generateSheetEnabled,
+            signerName: signerName,
+            signerDate: signerDate
           });
 
+          const hasSignatureBlock = signatureImage || signerName || signerDate;
           let namePrefix = 'Processed_';
-          if (signatureImage && generateSheetEnabled) {
+          if (hasSignatureBlock && generateSheetEnabled) {
             namePrefix = 'Signed_CRS_';
-          } else if (signatureImage) {
+          } else if (hasSignatureBlock) {
             namePrefix = 'Signed_';
           } else if (generateSheetEnabled) {
             namePrefix = 'CRS_';
@@ -124,6 +129,10 @@ function App() {
             onPdfUpload={handlePdfUpload}
             onSignatureUpload={handleSignatureUpload}
             signatureImage={signatureImage}
+            signerName={signerName}
+            onSignerNameChange={setSignerName}
+            signerDate={signerDate}
+            onSignerDateChange={setSignerDate}
             generateSheetEnabled={generateSheetEnabled}
             onToggleGenerateSheet={setGenerateSheetEnabled}
           />
@@ -145,7 +154,7 @@ function App() {
                 className="btn btn-primary"
                 style={{ width: '100%' }}
                 onClick={handleProcess}
-                disabled={pdfFiles.length === 0 || (!signatureImage && !generateSheetEnabled) || processing}
+                disabled={pdfFiles.length === 0 || (!signatureImage && !generateSheetEnabled && !signerName && !signerDate) || processing}
               >
                 {processing ? (
                   <>
@@ -154,9 +163,9 @@ function App() {
                 ) : (
                   <>
                     <FileSignature size={20} />
-                    {signatureImage && generateSheetEnabled ? (
+                    {(signatureImage || signerName || signerDate) && generateSheetEnabled ? (
                       `Sign & Add Sheets (${pdfFiles.length})`
-                    ) : signatureImage ? (
+                    ) : (signatureImage || signerName || signerDate) ? (
                       `Sign Documents (${pdfFiles.length})`
                     ) : generateSheetEnabled ? (
                       `Generate Sheets (${pdfFiles.length})`

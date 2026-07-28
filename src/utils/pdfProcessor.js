@@ -518,25 +518,47 @@ export async function processSignedPDF(pdfBuffer, signatureBuffer, signatureType
         sheetPagesCount = await generateCommentResolutionSheet(pdfDoc, comments);
     }
 
-    // Embed the signature image if it is provided
-    if (signatureBuffer) {
+    // Embed and draw the signature block if image, name, or date are provided
+    if (signatureBuffer || options.signerName || options.signerDate) {
         let signatureImageEmbed;
-        if (signatureType === 'image/png') {
-            signatureImageEmbed = await pdfDoc.embedPng(signatureBuffer);
-        } else if (signatureType === 'image/jpeg' || signatureType === 'image/jpg') {
-            signatureImageEmbed = await pdfDoc.embedJpg(signatureBuffer);
-        } else {
-            throw new Error(`Unsupported image type: ${signatureType}. Please use PNG or JPG.`);
+        let scaledWidth = 0;
+        let scaledHeight = 0;
+
+        if (signatureBuffer) {
+            if (signatureType === 'image/png') {
+                signatureImageEmbed = await pdfDoc.embedPng(signatureBuffer);
+            } else if (signatureType === 'image/jpeg' || signatureType === 'image/jpg') {
+                signatureImageEmbed = await pdfDoc.embedJpg(signatureBuffer);
+            } else {
+                throw new Error(`Unsupported image type: ${signatureType}. Please use PNG or JPG.`);
+            }
+
+            // Calculate scaled dimensions for the signature
+            const maxWidth = 150;
+            const maxHeight = 75;
+
+            const { width, height } = signatureImageEmbed.scale(1);
+            const scale = Math.min(maxWidth / width, maxHeight / height, 1);
+            scaledWidth = width * scale;
+            scaledHeight = height * scale;
         }
 
-        // Calculate scaled dimensions for the signature
-        const maxWidth = 150;
-        const maxHeight = 75;
+        // Initialize text details
+        const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+        const fontSize = 7.5;
+        const lineHeight = 10;
+        
+        const textLines = [];
+        if (options.signerName) {
+            textLines.push(`Name: ${options.signerName}`);
+        }
+        if (options.signerDate) {
+            textLines.push(`Date: ${options.signerDate}`);
+        }
 
-        let { width, height } = signatureImageEmbed.scale(1);
-        const scale = Math.min(maxWidth / width, maxHeight / height, 1);
-        const scaledWidth = width * scale;
-        const scaledHeight = height * scale;
+        const spacing = signatureBuffer && textLines.length > 0 ? 6 : 0;
+        const textBlockHeight = textLines.length * lineHeight;
+        const totalBlockHeight = scaledHeight + spacing + textBlockHeight;
 
         // Add signature to each of the ORIGINAL pages
         const pages = pdfDoc.getPages();
@@ -549,16 +571,40 @@ export async function processSignedPDF(pdfBuffer, signatureBuffer, signatureType
             const marginX = 50;
             const marginY = 50;
 
-            const x = pageWidth - scaledWidth - marginX;
-            const y = marginY; // 0,0 is bottom left in pdf-lib
+            // Calculate max width of the block to right-align correctly
+            let maxBlockWidth = scaledWidth;
+            for (const line of textLines) {
+                const w = helvetica.widthOfTextAtSize(line, fontSize);
+                if (w > maxBlockWidth) maxBlockWidth = w;
+            }
 
-            page.drawImage(signatureImageEmbed, {
-                x,
-                y,
-                width: scaledWidth,
-                height: scaledHeight,
-                opacity: 0.9,
-            });
+            const x = pageWidth - maxBlockWidth - marginX;
+            const blockBottomY = marginY;
+
+            // 1. Draw text lines from bottom to top
+            let currentTextY = blockBottomY;
+            for (let j = textLines.length - 1; j >= 0; j--) {
+                page.drawText(textLines[j], {
+                    x,
+                    y: currentTextY,
+                    size: fontSize,
+                    font: helvetica,
+                    color: rgb(0.2, 0.2, 0.2),
+                });
+                currentTextY += lineHeight;
+            }
+
+            // 2. Draw signature image on top of the text block
+            if (signatureBuffer) {
+                const imageY = blockBottomY + textBlockHeight + spacing;
+                page.drawImage(signatureImageEmbed, {
+                    x,
+                    y: imageY,
+                    width: scaledWidth,
+                    height: scaledHeight,
+                    opacity: 0.9,
+                });
+            }
         }
     }
 
