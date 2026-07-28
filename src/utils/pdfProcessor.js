@@ -1,4 +1,4 @@
-import { PDFDocument, PDFName, PDFString, PDFHexString, rgb, StandardFonts } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFString, PDFHexString, rgb, StandardFonts, degrees } from 'pdf-lib';
 
 /**
  * Sanitizes a string so that it can be safely encoded using standard PDF WinAnsi (Windows-1252) encoding.
@@ -573,9 +573,19 @@ export async function processSignedPDF(pdfBuffer, signatureBuffer, signatureType
         // Since sheet pages were inserted at the beginning, we start signing from sheetPagesCount
         for (let i = sheetPagesCount; i < pages.length; i++) {
             const page = pages[i];
-            const { width: pageWidth, height: pageHeight } = page.getSize();
+            const size = page.getSize();
+            const W = size.width;
+            const H = size.height;
+            const rot = page.getRotation().angle || 0;
 
-            // Position margins
+            let W_visual = W;
+            let H_visual = H;
+            if (rot === 90 || rot === 270) {
+                W_visual = H;
+                H_visual = W;
+            }
+
+            // Margins (visual space)
             const marginX = 50;
             const marginY = 50;
 
@@ -586,46 +596,82 @@ export async function processSignedPDF(pdfBuffer, signatureBuffer, signatureType
                 if (w > maxBlockWidth) maxBlockWidth = w;
             }
 
-            // Determine X-position based on selected alignment
-            let x;
+            // Coordinate transformation helper from visual layout to unrotated PDF coords
+            const getPdfCoords = (X_vis, Y_vis) => {
+                if (rot === 90) {
+                    return {
+                        x: Y_vis,
+                        y: H - X_vis,
+                        rotateAngle: -90
+                    };
+                } else if (rot === 180) {
+                    return {
+                        x: W - X_vis,
+                        y: H - Y_vis,
+                        rotateAngle: 180
+                    };
+                } else if (rot === 270) {
+                    return {
+                        x: W - Y_vis,
+                        y: X_vis,
+                        rotateAngle: 90
+                    };
+                } else {
+                    return {
+                        x: X_vis,
+                        y: Y_vis,
+                        rotateAngle: 0
+                    };
+                }
+            };
+
+            // Determine block visual bottom-left X-coordinate based on selected alignment
+            let X_block;
             if (options.stampAlignment === 'left') {
-                x = marginX;
+                X_block = marginX;
             } else if (options.stampAlignment === 'center') {
-                x = (pageWidth - maxBlockWidth) / 2;
+                X_block = (W_visual - maxBlockWidth) / 2;
             } else {
                 // Default: right
-                x = pageWidth - maxBlockWidth - marginX;
+                X_block = W_visual - maxBlockWidth - marginX;
             }
 
-            const blockBottomY = marginY;
+            const Y_block = marginY;
 
             // 1. Draw text lines from bottom to top, centered relative to the block width
-            let currentTextY = blockBottomY;
+            let currentTextY = Y_block;
             for (let j = textLines.length - 1; j >= 0; j--) {
                 const line = textLines[j];
                 const textWidth = helvetica.widthOfTextAtSize(line, fontSize);
-                const textX = x + (maxBlockWidth - textWidth) / 2;
+                const textX = X_block + (maxBlockWidth - textWidth) / 2;
+
+                const pdfCoords = getPdfCoords(textX, currentTextY);
 
                 page.drawText(line, {
-                    x: textX,
-                    y: currentTextY,
+                    x: pdfCoords.x,
+                    y: pdfCoords.y,
                     size: fontSize,
                     font: helvetica,
                     color: rgb(0.2, 0.2, 0.2),
+                    rotate: degrees(pdfCoords.rotateAngle)
                 });
                 currentTextY += lineHeight;
             }
 
             // 2. Draw signature image on top of the text block, centered relative to the block width
             if (signatureBuffer) {
-                const imageY = blockBottomY + textBlockHeight + spacing;
-                const imageX = x + (maxBlockWidth - scaledWidth) / 2;
+                const imageY = Y_block + textBlockHeight + spacing;
+                const imageX = X_block + (maxBlockWidth - scaledWidth) / 2;
+
+                const pdfCoords = getPdfCoords(imageX, imageY);
+
                 page.drawImage(signatureImageEmbed, {
-                    x: imageX,
-                    y: imageY,
+                    x: pdfCoords.x,
+                    y: pdfCoords.y,
                     width: scaledWidth,
                     height: scaledHeight,
                     opacity: 0.9,
+                    rotate: degrees(pdfCoords.rotateAngle)
                 });
             }
         }
