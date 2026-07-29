@@ -1,8 +1,9 @@
 import React, { useState, useCallback } from 'react';
-import { FileSignature, MessageSquare, X, Upload, FilePlus, Settings, Minimize2 } from 'lucide-react';
+import { FileSignature, MessageSquare, X, Upload, FilePlus, Settings, Minimize2, FileText } from 'lucide-react';
 import FileUpload from './components/FileUpload';
 import DocumentList from './components/DocumentList';
 import { processSignedPDF, extractCommentsFromPDF, compressPDF } from './utils/pdfProcessor';
+import { convertWordToPDF } from './utils/wordProcessor';
 
 function App() {
   const [pdfFiles, setPdfFiles] = useState([]);
@@ -22,6 +23,8 @@ function App() {
   const [customPageRange, setCustomPageRange] = useState('');
   const [compressEnabled, setCompressEnabled] = useState(false);
   const [signatureEnabled, setSignatureEnabled] = useState(false);
+  const [wordConverting, setWordConverting] = useState(false);
+  const [wordConvertStatus, setWordConvertStatus] = useState('');
 
   const changeSignerName = (name) => {
     setSignerName(name);
@@ -32,11 +35,45 @@ function App() {
   };
 
   const handlePdfUpload = async (files) => {
-    // Append new files
-    setPdfFiles(prev => [...prev, ...files]);
+    const results = [];
 
-    // Asynchronously extract comments for preview and default-toggle settings
     for (const file of files) {
+      let pdfFile = file;
+
+      // Auto-convert Word documents to PDF before adding
+      const isWord = file.name.toLowerCase().endsWith('.docx') ||
+                     file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+      if (isWord) {
+        setWordConverting(true);
+        setWordConvertStatus(`Converting "${file.name}"…`);
+        try {
+          const pdfBytes = await convertWordToPDF(file, (msg) => setWordConvertStatus(`"${file.name}": ${msg}`));
+          // Wrap the Uint8Array in a File so the rest of the pipeline is unchanged
+          const pdfName = file.name.replace(/\.docx$/i, '.pdf');
+          pdfFile = new File([pdfBytes], pdfName, { type: 'application/pdf' });
+        } catch (err) {
+          console.error('Word conversion failed:', err);
+          alert(`Could not convert "${file.name}" to PDF: ${err.message}`);
+          setWordConverting(false);
+          setWordConvertStatus('');
+          continue;
+        } finally {
+          setWordConverting(false);
+          setWordConvertStatus('');
+        }
+      }
+
+      results.push(pdfFile);
+    }
+
+    if (results.length === 0) return;
+
+    // Append converted/original files
+    setPdfFiles(prev => [...prev, ...results]);
+
+    // Scan for comments
+    for (const file of results) {
       try {
         const buffer = await file.arrayBuffer();
         const comments = await extractCommentsFromPDF(buffer);
@@ -154,11 +191,15 @@ function App() {
     setIsDraggingPdf(false);
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const files = Array.from(e.dataTransfer.files).filter(file => file.type === 'application/pdf');
+      const files = Array.from(e.dataTransfer.files).filter(file =>
+        file.type === 'application/pdf' ||
+        file.name.toLowerCase().endsWith('.docx') ||
+        file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      );
       if (files.length > 0) {
         handlePdfUpload(files);
       } else {
-        alert('Please upload PDF documents only.');
+        alert('Please upload PDF or Word (.docx) documents only.');
       }
     }
   }, [handlePdfUpload]);
@@ -264,12 +305,26 @@ function App() {
           </div>
 
           <div className="flex-col gap-lg">
-            {/* Upload PDFs Card */}
+            {/* Upload Documents Card */}
             <div className="glass-panel card animate-fade-in" style={{ animationDelay: '0.2s' }}>
               <h2 className="card-title">
                 <FilePlus />
-                Upload PDFs
+                Upload Documents
               </h2>
+
+              {/* Word conversion in-progress banner */}
+              {wordConverting && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: '0.75rem',
+                  background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.35)',
+                  borderRadius: 'var(--border-radius-md)', padding: '0.65rem 1rem',
+                  marginBottom: '0.75rem', fontSize: '0.82rem', color: 'var(--text-primary)'
+                }}>
+                  <FileText size={16} color="#3b82f6" style={{ flexShrink: 0 }} />
+                  <span className="animate-pulse">{wordConvertStatus || 'Converting Word document to PDF…'}</span>
+                </div>
+              )}
+
               <div
                 className={`dropzone ${isDraggingPdf ? 'active' : ''}`}
                 onDragOver={handleDragOver}
@@ -278,12 +333,12 @@ function App() {
                 onClick={() => document.getElementById('pdf-upload').click()}
               >
                 <Upload className="dropzone-icon" />
-                <h3 className="dropzone-title">Drag & drop PDFs here</h3>
-                <p className="dropzone-subtitle">or click to browse. Multiple files supported.</p>
+                <h3 className="dropzone-title">Drag &amp; drop files here</h3>
+                <p className="dropzone-subtitle">PDF or Word (.docx) — Multiple files supported</p>
                 <input
                   type="file"
                   id="pdf-upload"
-                  accept="application/pdf"
+                  accept="application/pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                   multiple
                   style={{ display: 'none' }}
                   onChange={handlePdfUploadClick}
@@ -306,7 +361,7 @@ function App() {
                   className="btn btn-primary"
                   style={{ width: '100%' }}
                   onClick={handleProcess}
-                  disabled={pdfFiles.length === 0 || (!signatureEnabled && !generateSheetEnabled && !compressEnabled) || processing}
+                  disabled={pdfFiles.length === 0 || (!signatureEnabled && !generateSheetEnabled && !compressEnabled) || processing || wordConverting}
                 >
                   {processing ? (
                     <>
