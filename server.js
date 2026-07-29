@@ -25,7 +25,8 @@ const execAsync = promisify(exec);
 const app = express();
 const PORT = 3001;
 
-app.use(cors({ origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://127.0.0.1:5173', 'http://127.0.0.1:5174', 'http://127.0.0.1:5175'] }));
+// Allow any localhost/127.0.0.1 origin (Vite picks whatever port is free)
+app.use(cors({ origin: /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/ }));
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } });
 
@@ -207,7 +208,7 @@ app.post('/convert', upload.single('file'), async (req, res) => {
 
 // ─── Start ───────────────────────────────────────────────────────────────────
 
-app.listen(PORT, async () => {
+app.listen(PORT, '127.0.0.1', async () => {
     ENGINE = await detectEngine();
     console.log(`\n  DocSign Conversion Server  →  http://localhost:${PORT}`);
     console.log(`  Conversion engine: ${ENGINE === 'word' ? '✓ Microsoft Word (COM)' : ENGINE === 'libreoffice' ? '✓ LibreOffice' : '✗ None detected'}`);
