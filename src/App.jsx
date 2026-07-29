@@ -228,8 +228,8 @@ function App() {
     <div className="container">
       <header className="header animate-fade-in">
         <div className="flex-center gap-md" style={{ marginBottom: '1rem' }}>
-          <div style={{ background: 'var(--card-bg)', padding: '1rem', borderRadius: '50%', border: '1px solid var(--card-border)' }}>
-            <FileSignature size={48} className="text-gradient" color="var(--accent-color)" />
+          <div style={{ padding: '0.25rem', borderRadius: '50%', background: 'var(--card-bg)', border: '1px solid var(--card-border)', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)' }}>
+            <img src="/logo.png" alt="DocSign Logo" style={{ width: '64px', height: '64px', borderRadius: '50%', objectFit: 'cover' }} />
           </div>
         </div>
         <h1>
