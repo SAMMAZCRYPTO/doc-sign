@@ -1,11 +1,25 @@
 import React, { useState, useCallback } from 'react';
-import { FileSignature, MessageSquare, X, Upload, FilePlus, Settings, Minimize2, FileText } from 'lucide-react';
+import { FileSignature, MessageSquare, X, Upload, FilePlus, Settings, Minimize2, FileText, Sun, Moon } from 'lucide-react';
 import FileUpload from './components/FileUpload';
 import DocumentList from './components/DocumentList';
 import { processSignedPDF, extractCommentsFromPDF, compressPDF } from './utils/pdfProcessor';
 import { convertWordToPDF } from './utils/wordProcessor';
 
 function App() {
+  const [theme, setTheme] = useState(() => {
+    const saved = localStorage.getItem('theme');
+    return saved || 'dark';
+  });
+  
+  React.useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  };
+
   const [pdfFiles, setPdfFiles] = useState([]);
   const [signatureImage, setSignatureImage] = useState(null);
   const [processing, setProcessing] = useState(false);
@@ -226,6 +240,27 @@ function App() {
 
   return (
     <div className="container">
+      <div style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
+        <button 
+          onClick={toggleTheme}
+          className="btn"
+          style={{ 
+            background: 'var(--card-bg)', 
+            border: '1px solid var(--card-border)', 
+            padding: '0.5rem', 
+            borderRadius: '50%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            color: 'var(--text-primary)'
+          }}
+          title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
+        >
+          {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+        </button>
+      </div>
+
       <header className="header animate-fade-in">
         <div className="flex-center gap-md" style={{ marginBottom: '1rem' }}>
           <div style={{ background: 'var(--card-bg)', padding: '1rem', borderRadius: '50%', border: '1px solid var(--card-border)' }}>

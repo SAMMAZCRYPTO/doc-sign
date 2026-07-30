@@ -2,7 +2,7 @@ import { renderAsync } from 'docx-preview';
 import html2canvas from 'html2canvas';
 import { PDFDocument } from 'pdf-lib';
 
-const SERVER_URL = 'http://127.0.0.1:3001';
+const SERVER_URL = '/api';
 
 /**
  * Checks whether the local conversion server is running and which engine it uses.
