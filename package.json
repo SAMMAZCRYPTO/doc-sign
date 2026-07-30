@@ -13,6 +13,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@vercel/analytics": "^2.0.1",
     "concurrently": "^10.0.4",
     "cors": "^2.8.6",
     "docx-preview": "^0.4.0",

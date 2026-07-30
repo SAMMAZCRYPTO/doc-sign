@@ -4,6 +4,7 @@ import FileUpload from './components/FileUpload';
 import DocumentList from './components/DocumentList';
 import { processSignedPDF, extractCommentsFromPDF, compressPDF } from './utils/pdfProcessor';
 import { convertWordToPDF } from './utils/wordProcessor';
+import { Analytics } from '@vercel/analytics/react';
 
 function App() {
   const [theme, setTheme] = useState(() => {
@@ -240,6 +241,7 @@ function App() {
 
   return (
     <div className="container">
+      <Analytics />
       <div style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
         <button 
           onClick={toggleTheme}
