@@ -1,8 +1,9 @@
 import React, { useState, useCallback } from 'react';
-import { FileSignature, MessageSquare, X, Upload, FilePlus, Settings, Minimize2, FileText, Sun, Moon } from 'lucide-react';
+import { FileSignature, MessageSquare, X, Upload, FilePlus, Settings, Minimize2, FileText, Sun, Moon, Type, Edit3, Check } from 'lucide-react';
 import FileUpload from './components/FileUpload';
 import DocumentList from './components/DocumentList';
-import { processSignedPDF, extractCommentsFromPDF, compressPDF } from './utils/pdfProcessor';
+import VisualPdfEditor from './components/VisualPdfEditor';
+import { processSignedPDF, extractCommentsFromPDF, compressPDF, findAndReplaceTextInPDF, findTextMatchesInPDF } from './utils/pdfProcessor';
 import { convertWordToPDF } from './utils/wordProcessor';
 import { Analytics } from '@vercel/analytics/react';
 
@@ -41,12 +42,82 @@ function App() {
   const [wordConverting, setWordConverting] = useState(false);
   const [wordConvertStatus, setWordConvertStatus] = useState('');
 
+  // Word & Text Editing States
+  const [editWordsEnabled, setEditWordsEnabled] = useState(false);
+  const [findReplaceRules, setFindReplaceRules] = useState([
+    {
+      id: 1,
+      findText: '',
+      replaceText: '',
+      matchCase: false,
+      matchWholeWord: false,
+      fontFamily: 'Helvetica',
+      fontSize: '',
+      textColor: '#000000',
+      bgFill: '#ffffff',
+      targetPages: 'all',
+      showOptions: false
+    }
+  ]);
+  const [scannedMatches, setScannedMatches] = useState([]);
+  const [scanningMatches, setScanningMatches] = useState(false);
+  const [editingDocument, setEditingDocument] = useState(null); // { file, index }
+
   const changeSignerName = (name) => {
     setSignerName(name);
   };
 
   const changeSignerDate = (date) => {
     setSignerDate(date);
+  };
+
+  const handleScanMatches = async () => {
+    if (pdfFiles.length === 0) return;
+    const activeRules = findReplaceRules.filter(r => r.findText && r.findText.trim());
+    if (activeRules.length === 0) {
+      alert('Please enter at least one word or text to find in the rules.');
+      return;
+    }
+    setScanningMatches(true);
+    try {
+      let allMatches = [];
+      for (const file of pdfFiles) {
+        const buffer = await file.arrayBuffer();
+        const matches = await findTextMatchesInPDF(buffer, activeRules);
+        allMatches = [...allMatches, ...matches];
+      }
+      setScannedMatches(allMatches);
+      if (allMatches.length === 0) {
+        alert('No matching text occurrences found in the uploaded documents.');
+      }
+    } catch (err) {
+      console.error('Error scanning matches:', err);
+      alert('Failed to scan for matches: ' + err.message);
+    } finally {
+      setScanningMatches(false);
+    }
+  };
+
+  const handleSaveVisualEdits = async (updatedFile, editsCount) => {
+    if (!editingDocument) return;
+    const idx = editingDocument.index;
+    setPdfFiles(prev => {
+      const next = [...prev];
+      next[idx] = updatedFile;
+      return next;
+    });
+
+    try {
+      const buffer = await updatedFile.arrayBuffer();
+      const comments = await extractCommentsFromPDF(buffer);
+      setDetectedComments(prev => ({
+        ...prev,
+        [updatedFile.name]: comments
+      }));
+    } catch (e) {
+      console.error('Error re-scanning comments:', e);
+    }
+    setEditingDocument(null);
   };
 
   const handlePdfUpload = async (files) => {
@@ -64,7 +135,6 @@ function App() {
         setWordConvertStatus(`Converting "${file.name}"…`);
         try {
           const pdfBytes = await convertWordToPDF(file, (msg) => setWordConvertStatus(`"${file.name}": ${msg}`));
-          // Wrap the Uint8Array in a File so the rest of the pipeline is unchanged
           const pdfName = file.name.replace(/\.docx$/i, '.pdf');
           pdfFile = new File([pdfBytes], pdfName, { type: 'application/pdf' });
         } catch (err) {
@@ -96,7 +166,6 @@ function App() {
           ...prev,
           [file.name]: comments
         }));
-        // Comments detected, but we do not auto-enable the sheet page to let user control features manually.
       } catch (error) {
         console.error(`Error scanning comments for ${file.name}:`, error);
       }
@@ -120,8 +189,11 @@ function App() {
     setSignatureImage(file);
   };
 
+  const hasAnyWordRules = editWordsEnabled && findReplaceRules.some(r => r.findText && r.findText.trim());
+  const isAnyActionEnabled = signatureEnabled || generateSheetEnabled || compressEnabled || hasAnyWordRules;
+
   const handleProcess = async () => {
-    if (pdfFiles.length === 0 || (!signatureEnabled && !generateSheetEnabled && !compressEnabled)) return;
+    if (pdfFiles.length === 0 || !isAnyActionEnabled) return;
 
     setProcessing(true);
     const results = [];
@@ -132,16 +204,21 @@ function App() {
         const file = pdfFiles[i];
         try {
           const pdfBuffer = await file.arrayBuffer();
-          let processedPdfBytes;
+          let processedPdfBytes = new Uint8Array(pdfBuffer);
 
+          // 1. Apply Find & Replace Word Edits first (if enabled)
+          if (hasAnyWordRules) {
+            const activeRules = findReplaceRules.filter(r => r.findText && r.findText.trim());
+            processedPdfBytes = await findAndReplaceTextInPDF(processedPdfBytes, activeRules);
+          }
+
+          // 2. Apply Signatures & Comment Resolution Sheets (if enabled)
           const needsSignOrSheet = signatureEnabled || generateSheetEnabled;
-
           if (needsSignOrSheet) {
-            // Run the full signing / sheet pipeline
             const sigBuffer = signatureEnabled && signatureImage ? await signatureImage.arrayBuffer() : null;
             const sigType   = signatureEnabled && signatureImage ? signatureImage.type : null;
 
-            processedPdfBytes = await processSignedPDF(pdfBuffer, sigBuffer, sigType, {
+            processedPdfBytes = await processSignedPDF(processedPdfBytes, sigBuffer, sigType, {
               generateResolutionSheet: generateSheetEnabled,
               signerName: signatureEnabled ? signerName : '',
               signerDate: signatureEnabled ? signerDate : '',
@@ -150,33 +227,22 @@ function App() {
               pageSelectionType: pageSelectionType,
               customPageRange: customPageRange
             });
-          } else {
-            // No signing or sheet needed — pass original bytes through
-            processedPdfBytes = new Uint8Array(pdfBuffer);
           }
 
+          // 3. Apply PDF Compression at the very end (if enabled)
           if (compressEnabled) {
-            // Feed the current bytes (possibly already signed) to the compressor
             processedPdfBytes = await compressPDF(processedPdfBytes);
           }
 
+          // Build descriptive output filename
           const hasSignatureBlock = signatureEnabled && (signatureImage || signerName || signerDate);
-          let namePrefix = 'Processed_';
-          if (compressEnabled && hasSignatureBlock && generateSheetEnabled) {
-            namePrefix = 'Compressed_Signed_CRS_';
-          } else if (compressEnabled && hasSignatureBlock) {
-            namePrefix = 'Compressed_Signed_';
-          } else if (compressEnabled && generateSheetEnabled) {
-            namePrefix = 'Compressed_CRS_';
-          } else if (compressEnabled) {
-            namePrefix = 'Compressed_';
-          } else if (hasSignatureBlock && generateSheetEnabled) {
-            namePrefix = 'Signed_CRS_';
-          } else if (hasSignatureBlock) {
-            namePrefix = 'Signed_';
-          } else if (generateSheetEnabled) {
-            namePrefix = 'CRS_';
-          }
+          const prefixes = [];
+          if (compressEnabled) prefixes.push('Compressed');
+          if (hasSignatureBlock) prefixes.push('Signed');
+          if (hasAnyWordRules) prefixes.push('Edited');
+          if (generateSheetEnabled) prefixes.push('CRS');
+          
+          const namePrefix = prefixes.length > 0 ? `${prefixes.join('_')}_` : 'Processed_';
 
           results.push({
             originalFile: file,
@@ -283,10 +349,22 @@ function App() {
           >
             <FileSignature size={18} />
             <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Signature & Stamp</span>
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Configure details & size</span>
+              <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Signature &amp; Stamp</span>
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Configure details &amp; size</span>
             </div>
             <span className={`tab-indicator ${signatureEnabled ? 'enabled' : ''}`}></span>
+          </button>
+
+          <button
+            className={`sidebar-tab ${activeTab === 'edit' ? 'active' : ''}`}
+            onClick={() => setActiveTab('edit')}
+          >
+            <Type size={18} />
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Edit Words &amp; Text</span>
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Find &amp; replace or click-to-edit</span>
+            </div>
+            <span className={`tab-indicator ${hasAnyWordRules ? 'enabled' : ''}`}></span>
           </button>
 
           <button
@@ -296,7 +374,7 @@ function App() {
             <MessageSquare size={18} />
             <div style={{ display: 'flex', flexDirection: 'column' }}>
               <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Comment Resolution</span>
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Scan & prepend table sheets</span>
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Scan &amp; prepend table sheets</span>
             </div>
             <span className={`tab-indicator ${generateSheetEnabled ? 'enabled' : ''}`}></span>
           </button>
@@ -338,6 +416,15 @@ function App() {
               onToggleCompress={setCompressEnabled}
               signatureEnabled={signatureEnabled}
               onToggleSignature={setSignatureEnabled}
+              editWordsEnabled={editWordsEnabled}
+              onToggleEditWords={setEditWordsEnabled}
+              findReplaceRules={findReplaceRules}
+              onFindReplaceRulesChange={setFindReplaceRules}
+              onScanMatches={handleScanMatches}
+              scannedMatches={scannedMatches}
+              scanningMatches={scanningMatches}
+              onOpenVisualEditor={(file) => setEditingDocument({ file, index: pdfFiles.indexOf(file) })}
+              pdfFiles={pdfFiles}
             />
           </div>
 
@@ -390,6 +477,7 @@ function App() {
               processing={processing}
               detectedComments={detectedComments}
               onPreviewComments={setPreviewCommentsFile}
+              onEditDocument={(file, index) => setEditingDocument({ file, index })}
             />
 
             <div className="glass-panel card">
@@ -398,7 +486,7 @@ function App() {
                   className="btn btn-primary"
                   style={{ width: '100%' }}
                   onClick={handleProcess}
-                  disabled={pdfFiles.length === 0 || (!signatureEnabled && !generateSheetEnabled && !compressEnabled) || processing || wordConverting}
+                  disabled={pdfFiles.length === 0 || !isAnyActionEnabled || processing || wordConverting}
                 >
                   {processing ? (
                     <>
@@ -407,23 +495,19 @@ function App() {
                   ) : (
                     <>
                       <FileSignature size={20} />
-                      {signatureEnabled && generateSheetEnabled && compressEnabled ? (
-                        `Sign, Add Sheets & Compress (${pdfFiles.length})`
-                      ) : signatureEnabled && generateSheetEnabled ? (
-                        `Sign & Add Sheets (${pdfFiles.length})`
-                      ) : signatureEnabled && compressEnabled ? (
-                        `Sign & Compress (${pdfFiles.length})`
-                      ) : signatureEnabled ? (
-                        `Sign Documents (${pdfFiles.length})`
-                      ) : generateSheetEnabled && compressEnabled ? (
-                        `Add Sheets & Compress (${pdfFiles.length})`
-                      ) : generateSheetEnabled ? (
-                        `Generate Sheets (${pdfFiles.length})`
-                      ) : compressEnabled ? (
-                        `Compress Documents (${pdfFiles.length})`
-                      ) : (
-                        `Process Documents (${pdfFiles.length})`
-                      )}
+                      {(() => {
+                        const count = pdfFiles.length;
+                        const actions = [];
+                        if (hasAnyWordRules) actions.push('Edit Words');
+                        if (signatureEnabled) actions.push('Sign');
+                        if (generateSheetEnabled) actions.push('Add Sheets');
+                        if (compressEnabled) actions.push('Compress');
+
+                        if (actions.length > 0) {
+                          return `${actions.join(', ')} (${count})`;
+                        }
+                        return `Process Documents (${count})`;
+                      })()}
                     </>
                   )}
                 </button>
@@ -432,6 +516,15 @@ function App() {
           </div>
         </main>
       </div>
+
+      {/* Visual PDF Editor Studio Modal */}
+      {editingDocument && (
+        <VisualPdfEditor
+          file={editingDocument.file}
+          onClose={() => setEditingDocument(null)}
+          onSave={handleSaveVisualEdits}
+        />
+      )}
 
       {previewCommentsFile && (
         <div className="modal-overlay flex-center animate-fade-in" onClick={() => setPreviewCommentsFile(null)}>

@@ -1,4 +1,10 @@
 import { PDFDocument, PDFName, PDFString, PDFHexString, rgb, StandardFonts, degrees, PDFRawStream, PDFNumber, decodePDFRawStream } from 'pdf-lib';
+import * as pdfjsLib from 'pdfjs-dist';
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.js?url';
+
+if (typeof window !== 'undefined' && pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+}
 
 /**
  * Sanitizes a string so that it can be safely encoded using standard PDF WinAnsi (Windows-1252) encoding.
@@ -1018,5 +1024,409 @@ export async function compressPDF(pdfBuffer) {
     console.log(`[compressPDF] Processed ${imagesProcessed} image(s).`);
     return await pdfDoc.save({ useObjectStreams: true, addDefaultPage: false });
 }
+
+// ─── PDF Word & Text Editing Utilities ──────────────────────────────────────
+
+/**
+ * Converts a hex color string (e.g. #3b82f6) to pdf-lib rgb() color object.
+ */
+export function hexToRgb(hex) {
+    if (!hex || hex === 'none' || hex === 'transparent') return null;
+    let cleaned = hex.replace('#', '');
+    if (cleaned.length === 3) {
+        cleaned = cleaned.split('').map(c => c + c).join('');
+    }
+    const num = parseInt(cleaned, 16);
+    if (isNaN(num)) return rgb(0, 0, 0);
+    const r = ((num >> 16) & 255) / 255;
+    const g = ((num >> 8) & 255) / 255;
+    const b = (num & 255) / 255;
+    return rgb(r, g, b);
+}
+
+/**
+ * Maps font name strings to embedded StandardFonts in pdf-lib.
+ */
+export async function getStandardFont(pdfDoc, fontName) {
+    switch (fontName) {
+        case 'HelveticaBold':
+        case 'Helvetica-Bold':
+            return await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+        case 'HelveticaOblique':
+        case 'Helvetica-Oblique':
+            return await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+        case 'TimesRoman':
+        case 'Times-Roman':
+            return await pdfDoc.embedFont(StandardFonts.TimesRoman);
+        case 'TimesRomanBold':
+        case 'Times-Bold':
+            return await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+        case 'Courier':
+            return await pdfDoc.embedFont(StandardFonts.Courier);
+        case 'CourierBold':
+        case 'Courier-Bold':
+            return await pdfDoc.embedFont(StandardFonts.CourierBold);
+        case 'Helvetica':
+        default:
+            return await pdfDoc.embedFont(StandardFonts.Helvetica);
+    }
+}
+
+/**
+ * Parses page range string (e.g. "1, 3-5") into a Set of 1-based page numbers.
+ */
+export function parsePageRanges(rangeStr, totalPages) {
+    if (!rangeStr || typeof rangeStr !== 'string' || rangeStr.trim().toLowerCase() === 'all') {
+        return new Set(Array.from({ length: totalPages }, (_, i) => i + 1));
+    }
+    const pages = new Set();
+    const parts = rangeStr.split(',');
+    for (const part of parts) {
+        const trimmed = part.trim();
+        if (!trimmed) continue;
+        if (trimmed.includes('-')) {
+            const [startStr, endStr] = trimmed.split('-');
+            const start = parseInt(startStr, 10);
+            const end = parseInt(endStr, 10);
+            if (!isNaN(start) && !isNaN(end)) {
+                for (let p = Math.max(1, start); p <= Math.min(totalPages, end); p++) {
+                    pages.add(p);
+                }
+            }
+        } else {
+            const p = parseInt(trimmed, 10);
+            if (!isNaN(p) && p >= 1 && p <= totalPages) {
+                pages.add(p);
+            }
+        }
+    }
+    return pages.size > 0 ? pages : new Set(Array.from({ length: totalPages }, (_, i) => i + 1));
+}
+
+/**
+ * Extracts all text spans, words, font sizes and precise coordinates from a PDF.
+ * 
+ * @param {ArrayBuffer|Uint8Array} pdfBuffer - Input PDF bytes
+ * @returns {Promise<Object>} - Object with page count and pagesData containing extracted text items
+ */
+export async function extractTextItemsFromPDF(pdfBuffer) {
+    const rawBytes = pdfBuffer instanceof Uint8Array ? pdfBuffer : new Uint8Array(pdfBuffer);
+    const loadingTask = pdfjsLib.getDocument({ data: rawBytes });
+    const pdf = await loadingTask.promise;
+    const numPages = pdf.numPages;
+    const pagesData = {};
+
+    for (let p = 1; p <= numPages; p++) {
+        const page = await pdf.getPage(p);
+        const viewport = page.getViewport({ scale: 1.0 });
+        const textContent = await page.getTextContent();
+        const items = [];
+
+        for (const item of textContent.items) {
+            if (!item.str || !item.str.trim()) continue;
+            const transform = item.transform; // [scaleX, skewY, skewX, scaleY, tx, ty]
+            const tx = transform[4];
+            const ty = transform[5];
+            const fontSize = Math.hypot(transform[0], transform[1]) || item.height || 10;
+            const width = item.width || (fontSize * item.str.length * 0.5);
+            const height = fontSize;
+
+            // In viewport coordinates (top-left origin)
+            const [vx, vy] = viewport.convertToViewportPoint(tx, ty);
+            const canvasX = vx;
+            const canvasY = vy - height;
+
+            items.push({
+                str: item.str,
+                dir: item.dir,
+                pdfX: tx,
+                pdfY: ty,
+                width: width,
+                height: height,
+                fontSize: fontSize,
+                fontName: item.fontName,
+                canvasX: canvasX,
+                canvasY: canvasY,
+                canvasWidth: width,
+                canvasHeight: height,
+                page: p
+            });
+        }
+
+        pagesData[p] = {
+            pageNum: p,
+            pageWidth: viewport.width,
+            pageHeight: viewport.height,
+            rotation: viewport.rotation,
+            items: items
+        };
+    }
+
+    return { numPages, pages: pagesData };
+}
+
+/**
+ * Scans a PDF for words/phrases based on search rules.
+ * 
+ * @param {ArrayBuffer|Uint8Array} pdfBuffer - Input PDF bytes
+ * @param {Array<Object>} rules - Search rules [{ findText, replaceText, matchCase, matchWholeWord, targetPages }]
+ * @returns {Promise<Array<Object>>} - Array of matched text occurrences with coordinates and snippets
+ */
+export async function findTextMatchesInPDF(pdfBuffer, rules = []) {
+    const rulesList = Array.isArray(rules) ? rules : [rules];
+    const textData = await extractTextItemsFromPDF(pdfBuffer);
+    const results = [];
+
+    for (let p = 1; p <= textData.numPages; p++) {
+        const pageInfo = textData.pages[p];
+        if (!pageInfo) continue;
+
+        for (const rule of rulesList) {
+            const findText = (rule.findText || '').trim();
+            if (!findText) continue;
+
+            const targetPages = parsePageRanges(rule.targetPages || 'all', textData.numPages);
+            if (!targetPages.has(p)) continue;
+
+            const matchCase = !!rule.matchCase;
+            const matchWholeWord = !!rule.matchWholeWord;
+
+            for (const item of pageInfo.items) {
+                const itemStr = item.str;
+                const searchStr = matchCase ? itemStr : itemStr.toLowerCase();
+                const term = matchCase ? findText : findText.toLowerCase();
+
+                let startIndex = 0;
+                while (startIndex < searchStr.length) {
+                    const matchIndex = searchStr.indexOf(term, startIndex);
+                    if (matchIndex === -1) break;
+
+                    // Check whole word if requested
+                    if (matchWholeWord) {
+                        const prevChar = matchIndex > 0 ? searchStr[matchIndex - 1] : ' ';
+                        const nextChar = matchIndex + term.length < searchStr.length ? searchStr[matchIndex + term.length] : ' ';
+                        const isWordBoundary = /\W/.test(prevChar) && /\W/.test(nextChar);
+                        if (!isWordBoundary) {
+                            startIndex = matchIndex + term.length;
+                            continue;
+                        }
+                    }
+
+                    // Calculate bounding box in PDF points
+                    const charRatioStart = matchIndex / itemStr.length;
+                    const charRatioWidth = term.length / itemStr.length;
+                    const matchX = item.pdfX + (item.width * charRatioStart);
+                    const matchWidth = Math.max(8, item.width * charRatioWidth);
+                    const matchY = item.pdfY;
+                    const matchHeight = item.height;
+
+                    // Snippet context
+                    const startSnippet = Math.max(0, matchIndex - 15);
+                    const endSnippet = Math.min(itemStr.length, matchIndex + term.length + 15);
+                    const snippet = (startSnippet > 0 ? '…' : '') + 
+                                    itemStr.substring(startSnippet, endSnippet) + 
+                                    (endSnippet < itemStr.length ? '…' : '');
+
+                    results.push({
+                        ruleId: rule.id,
+                        page: p,
+                        findText: findText,
+                        replaceText: rule.replaceText || '',
+                        matchedText: itemStr.substring(matchIndex, matchIndex + term.length),
+                        snippet: snippet,
+                        pdfX: matchX,
+                        pdfY: matchY,
+                        pdfWidth: matchWidth,
+                        pdfHeight: matchHeight,
+                        fontSize: item.fontSize,
+                        fontFamily: rule.fontFamily || 'Helvetica',
+                        textColor: rule.textColor || '#000000',
+                        bgFill: rule.bgFill || '#ffffff',
+                        canvasX: item.canvasX + (item.canvasWidth * charRatioStart),
+                        canvasY: item.canvasY,
+                        canvasWidth: matchWidth,
+                        canvasHeight: matchHeight
+                    });
+
+                    startIndex = matchIndex + term.length;
+                }
+            }
+        }
+    }
+
+    return results;
+}
+
+/**
+ * Performs Find & Replace across a PDF, masking original text and drawing replacements.
+ * 
+ * @param {ArrayBuffer|Uint8Array} pdfBuffer - Input PDF bytes
+ * @param {Array<Object>} rules - Search rules [{ findText, replaceText, matchCase, matchWholeWord, targetPages, fontFamily, textColor, bgFill }]
+ * @returns {Promise<Uint8Array>} - Modified PDF bytes
+ */
+export async function findAndReplaceTextInPDF(pdfBuffer, rules = []) {
+    const rawBytes = pdfBuffer instanceof Uint8Array ? pdfBuffer : new Uint8Array(pdfBuffer);
+    const pdfDoc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
+    const matches = await findTextMatchesInPDF(rawBytes, rules);
+
+    if (matches.length === 0) {
+        return rawBytes;
+    }
+
+    // Cache embedded fonts
+    const fontCache = {};
+    const getFont = async (fontName) => {
+        if (!fontCache[fontName]) {
+            fontCache[fontName] = await getStandardFont(pdfDoc, fontName);
+        }
+        return fontCache[fontName];
+    };
+
+    const pages = pdfDoc.getPages();
+
+    for (const match of matches) {
+        const pageIdx = match.page - 1;
+        if (pageIdx < 0 || pageIdx >= pages.length) continue;
+        const page = pages[pageIdx];
+
+        // 1. Draw whiteout / background mask over original word
+        if (match.bgFill && match.bgFill !== 'transparent' && match.bgFill !== 'none') {
+            const bgColor = hexToRgb(match.bgFill) || rgb(1, 1, 1);
+            page.drawRectangle({
+                x: match.pdfX - 1,
+                y: match.pdfY - 2,
+                width: match.pdfWidth + 2,
+                height: match.pdfHeight + 4,
+                color: bgColor
+            });
+        }
+
+        // 2. Draw replacement text
+        if (match.replaceText) {
+            const embeddedFont = await getFont(match.fontFamily || 'Helvetica');
+            const sanitizedText = sanitizeTextForWinAnsi(match.replaceText);
+            const textColor = hexToRgb(match.textColor) || rgb(0, 0, 0);
+            const fontSize = match.fontSize || 10;
+
+            page.drawText(sanitizedText, {
+                x: match.pdfX,
+                y: match.pdfY,
+                size: fontSize,
+                font: embeddedFont,
+                color: textColor
+            });
+        }
+    }
+
+    return await pdfDoc.save();
+}
+
+/**
+ * Applies visual studio edits (word replacements, custom text boxes, whiteout boxes, blackout redactions).
+ * 
+ * @param {ArrayBuffer|Uint8Array} pdfBuffer - Input PDF bytes
+ * @param {Object} pageEdits - Structured edits per page { [pageNum]: [edits] }
+ * @returns {Promise<Uint8Array>} - Modified PDF bytes
+ */
+export async function applyVisualEditsToPDF(pdfBuffer, pageEdits = {}) {
+    const rawBytes = pdfBuffer instanceof Uint8Array ? pdfBuffer : new Uint8Array(pdfBuffer);
+    const pdfDoc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
+    const pages = pdfDoc.getPages();
+
+    const fontCache = {};
+    const getFont = async (fontName) => {
+        if (!fontCache[fontName]) {
+            fontCache[fontName] = await getStandardFont(pdfDoc, fontName);
+        }
+        return fontCache[fontName];
+    };
+
+    for (const [pageNumStr, edits] of Object.entries(pageEdits)) {
+        const pageNum = parseInt(pageNumStr, 10);
+        const pageIndex = pageNum - 1;
+        if (pageIndex < 0 || pageIndex >= pages.length || !Array.isArray(edits)) continue;
+        const page = pages[pageIndex];
+
+        for (const edit of edits) {
+            if (edit.type === 'replace_word' || edit.type === 'text_box') {
+                // Background mask
+                if (edit.bgFill && edit.bgFill !== 'transparent' && edit.bgFill !== 'none') {
+                    const bgColor = hexToRgb(edit.bgFill) || rgb(1, 1, 1);
+                    page.drawRectangle({
+                        x: edit.pdfX - 1,
+                        y: edit.pdfY - 2,
+                        width: edit.pdfWidth + 2,
+                        height: edit.pdfHeight + 4,
+                        color: bgColor
+                    });
+                }
+                // Text overlay
+                if (edit.text) {
+                    const font = await getFont(edit.fontFamily || 'Helvetica');
+                    const color = hexToRgb(edit.textColor) || rgb(0, 0, 0);
+                    const size = edit.fontSize || 12;
+                    page.drawText(sanitizeTextForWinAnsi(edit.text), {
+                        x: edit.pdfX,
+                        y: edit.pdfY,
+                        size: size,
+                        font: font,
+                        color: color
+                    });
+                }
+            } else if (edit.type === 'whiteout') {
+                const color = hexToRgb(edit.color || '#ffffff') || rgb(1, 1, 1);
+                page.drawRectangle({
+                    x: edit.pdfX,
+                    y: edit.pdfY,
+                    width: edit.pdfWidth,
+                    height: edit.pdfHeight,
+                    color: color
+                });
+            } else if (edit.type === 'redact') {
+                const color = hexToRgb(edit.color || '#000000') || rgb(0, 0, 0);
+                page.drawRectangle({
+                    x: edit.pdfX,
+                    y: edit.pdfY,
+                    width: edit.pdfWidth,
+                    height: edit.pdfHeight,
+                    color: color
+                });
+            }
+        }
+    }
+
+    return await pdfDoc.save();
+}
+
+/**
+ * Renders a specific PDF page to an HTML5 canvas element at a target scale.
+ * 
+ * @param {ArrayBuffer|Uint8Array} pdfBuffer - Input PDF bytes
+ * @param {number} pageNum - 1-based page number
+ * @param {HTMLCanvasElement} canvas - The target canvas element
+ * @param {number} scale - Viewport scale factor (default: 1.5)
+ * @returns {Promise<Object>} - Render metadata { width, height, scale, page, viewport, numPages }
+ */
+export async function renderPdfPageToCanvas(pdfBuffer, pageNum, canvas, scale = 1.5) {
+    if (!canvas) return null;
+    const rawBytes = pdfBuffer instanceof Uint8Array ? pdfBuffer : new Uint8Array(pdfBuffer);
+    const loadingTask = pdfjsLib.getDocument({ data: rawBytes });
+    const pdf = await loadingTask.promise;
+    const page = await pdf.getPage(pageNum);
+    const viewport = page.getViewport({ scale: scale });
+
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+
+    const ctx = canvas.getContext('2d');
+    const renderContext = {
+        canvasContext: ctx,
+        viewport: viewport
+    };
+
+    await page.render(renderContext).promise;
+    return { width: viewport.width, height: viewport.height, scale, page, viewport, numPages: pdf.numPages };
+}
+
 
 

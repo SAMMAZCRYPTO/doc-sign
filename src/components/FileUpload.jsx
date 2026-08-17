@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { ImagePlus, X, Settings, Upload } from 'lucide-react';
+import { ImagePlus, X, Settings, Upload, Type, Search, Plus, Trash2, Sliders, Edit3, Check, RefreshCw } from 'lucide-react';
 
 export default function FileUpload({ 
     activeTab,
@@ -9,20 +9,29 @@ export default function FileUpload({
     onSignerNameChange, 
     signerDate, 
     onSignerDateChange, 
-    stampAlignment,
+    stampAlignment, 
     onStampAlignmentChange,
-    stampSize,
+    stampSize, 
     onStampSizeChange,
-    pageSelectionType,
+    pageSelectionType, 
     onPageSelectionTypeChange,
-    customPageRange,
+    customPageRange, 
     onCustomPageRangeChange,
     generateSheetEnabled, 
     onToggleGenerateSheet,
-    compressEnabled,
+    compressEnabled, 
     onToggleCompress,
-    signatureEnabled,
-    onToggleSignature
+    signatureEnabled, 
+    onToggleSignature,
+    editWordsEnabled,
+    onToggleEditWords,
+    findReplaceRules = [],
+    onFindReplaceRulesChange,
+    onScanMatches,
+    scannedMatches = [],
+    scanningMatches = false,
+    onOpenVisualEditor,
+    pdfFiles = []
 }) {
     const [isDraggingSig, setIsDraggingSig] = useState(false);
 
@@ -328,30 +337,253 @@ export default function FileUpload({
         );
     }
 
-    if (activeTab === 'compress') {
+    const handleAddRule = () => {
+        const newRule = {
+            id: Date.now(),
+            findText: '',
+            replaceText: '',
+            matchCase: false,
+            matchWholeWord: false,
+            fontFamily: 'Helvetica',
+            fontSize: '',
+            textColor: '#000000',
+            bgFill: '#ffffff',
+            targetPages: 'all',
+            showOptions: false
+        };
+        onFindReplaceRulesChange([...findReplaceRules, newRule]);
+    };
+
+    const handleUpdateRule = (id, field, value) => {
+        const updated = findReplaceRules.map(r => r.id === id ? { ...r, [field]: value } : r);
+        onFindReplaceRulesChange(updated);
+    };
+
+    const handleRemoveRule = (id) => {
+        const updated = findReplaceRules.filter(r => r.id !== id);
+        onFindReplaceRulesChange(updated.length > 0 ? updated : [{
+            id: Date.now(),
+            findText: '',
+            replaceText: '',
+            matchCase: false,
+            matchWholeWord: false,
+            fontFamily: 'Helvetica',
+            fontSize: '',
+            textColor: '#000000',
+            bgFill: '#ffffff',
+            targetPages: 'all',
+            showOptions: false
+        }]);
+    };
+
+    if (activeTab === 'edit') {
         return (
             <div className="glass-panel card animate-fade-in" style={{ animationDelay: '0.1s' }}>
-                <h2 className="card-title">
-                    <Settings />
-                    PDF Compression Settings
-                </h2>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+                    <h2 className="card-title" style={{ margin: 0 }}>
+                        <Type />
+                        Edit Words &amp; Text
+                    </h2>
+
+                    {pdfFiles.length > 0 && onOpenVisualEditor && (
+                        <button
+                            type="button"
+                            className="btn btn-secondary flex-center gap-xs"
+                            onClick={() => onOpenVisualEditor(pdfFiles[0])}
+                            style={{ padding: '0.45rem 0.85rem', fontSize: '0.8rem', background: 'rgba(59, 130, 246, 0.15)', color: 'var(--accent-color)', borderColor: 'rgba(59, 130, 246, 0.3)' }}
+                        >
+                            <Edit3 size={14} />
+                            Launch Visual Editor
+                        </button>
+                    )}
+                </div>
+
+                {/* Master Toggle */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', borderBottom: '1px solid var(--card-border)', paddingBottom: '1.25rem', marginBottom: '1.25rem' }}>
                     <label className="toggle-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', paddingRight: '1rem' }}>
-                            <span style={{ fontWeight: 500, fontSize: '0.95rem' }}>Enable Compression</span>
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Pack objects and serialize stream data to drastically minimize file sizes</span>
+                            <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>Enable Batch Find &amp; Replace</span>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Automatically find words or dates and replace them across documents</span>
                         </div>
                         <div className="toggle-switch-wrapper">
                             <input
                                 type="checkbox"
-                                id="toggle-compress"
-                                checked={compressEnabled}
-                                onChange={(e) => onToggleCompress(e.target.checked)}
+                                id="toggle-edit-words"
+                                checked={editWordsEnabled}
+                                onChange={(e) => onToggleEditWords(e.target.checked)}
                                 className="toggle-checkbox"
                             />
                             <span className="toggle-slider"></span>
                         </div>
                     </label>
+                </div>
+
+                <div style={{ opacity: editWordsEnabled ? 1 : 0.45, pointerEvents: editWordsEnabled ? 'auto' : 'none', transition: 'var(--transition)' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.25rem' }}>
+                        {findReplaceRules.map((rule, index) => (
+                            <div key={rule.id} className="find-replace-rule-card glass-panel" style={{ padding: '1rem', background: 'rgba(0,0,0,0.15)', borderRadius: 'var(--border-radius-md)' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr)) 40px', gap: '0.75rem', alignItems: 'center' }}>
+                                    <div className="input-group">
+                                        <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Find Word / Text</label>
+                                        <input
+                                            type="text"
+                                            className="input"
+                                            placeholder="e.g. 2024 or Acme Corp"
+                                            value={rule.findText}
+                                            onChange={(e) => handleUpdateRule(rule.id, 'findText', e.target.value)}
+                                            style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem' }}
+                                        />
+                                    </div>
+
+                                    <div className="input-group">
+                                        <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Replace With</label>
+                                        <input
+                                            type="text"
+                                            className="input"
+                                            placeholder="e.g. 2025 or Summit Global"
+                                            value={rule.replaceText}
+                                            onChange={(e) => handleUpdateRule(rule.id, 'replaceText', e.target.value)}
+                                            style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem' }}
+                                        />
+                                    </div>
+
+                                    <div style={{ display: 'flex', alignItems: 'flex-end', height: '100%', paddingBottom: '2px' }}>
+                                        <button
+                                            type="button"
+                                            className="btn-icon"
+                                            onClick={() => handleRemoveRule(rule.id)}
+                                            disabled={findReplaceRules.length === 1}
+                                            title="Delete rule"
+                                            style={{ opacity: findReplaceRules.length === 1 ? 0.3 : 0.8, color: 'var(--error-color)' }}
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Options Accordion Toggle */}
+                                <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <button
+                                        type="button"
+                                        className="btn-text flex-center gap-xs"
+                                        onClick={() => handleUpdateRule(rule.id, 'showOptions', !rule.showOptions)}
+                                        style={{ fontSize: '0.75rem', color: 'var(--accent-color)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                                    >
+                                        <Sliders size={12} />
+                                        {rule.showOptions ? 'Hide Styling & Matching Options' : 'Customize Font, Color & Target Pages'}
+                                    </button>
+                                </div>
+
+                                {rule.showOptions && (
+                                    <div className="animate-fade-in" style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px dashed var(--card-border)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem' }}>
+                                        <div className="input-group">
+                                            <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Font Family</label>
+                                            <select
+                                                className="input"
+                                                value={rule.fontFamily || 'Helvetica'}
+                                                onChange={(e) => handleUpdateRule(rule.id, 'fontFamily', e.target.value)}
+                                                style={{ padding: '0.4rem', fontSize: '0.75rem' }}
+                                            >
+                                                <option value="Helvetica">Helvetica</option>
+                                                <option value="HelveticaBold">Helvetica Bold</option>
+                                                <option value="TimesRoman">Times Roman</option>
+                                                <option value="TimesRomanBold">Times Bold</option>
+                                                <option value="Courier">Courier</option>
+                                            </select>
+                                        </div>
+
+                                        <div className="input-group">
+                                            <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Text Color</label>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <input
+                                                    type="color"
+                                                    value={rule.textColor || '#000000'}
+                                                    onChange={(e) => handleUpdateRule(rule.id, 'textColor', e.target.value)}
+                                                    style={{ width: '32px', height: '32px', padding: '0', border: 'none', borderRadius: '4px', cursor: 'pointer', background: 'none' }}
+                                                />
+                                                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{rule.textColor || '#000000'}</span>
+                                            </div>
+                                        </div>
+
+                                        <div className="input-group">
+                                            <label style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Pages</label>
+                                            <input
+                                                type="text"
+                                                className="input"
+                                                placeholder="all, or 1, 3-5"
+                                                value={rule.targetPages || 'all'}
+                                                onChange={(e) => handleUpdateRule(rule.id, 'targetPages', e.target.value)}
+                                                style={{ padding: '0.4rem 0.6rem', fontSize: '0.75rem' }}
+                                            />
+                                        </div>
+
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', justifyContent: 'center' }}>
+                                            <label style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer' }}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={rule.matchCase}
+                                                    onChange={(e) => handleUpdateRule(rule.id, 'matchCase', e.target.checked)}
+                                                />
+                                                Match Case
+                                            </label>
+                                            <label style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer' }}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={rule.matchWholeWord}
+                                                    onChange={(e) => handleUpdateRule(rule.id, 'matchWholeWord', e.target.checked)}
+                                                />
+                                                Whole Word
+                                            </label>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                        <button
+                            type="button"
+                            className="btn btn-secondary flex-center gap-xs"
+                            onClick={handleAddRule}
+                            style={{ padding: '0.45rem 0.85rem', fontSize: '0.8rem' }}
+                        >
+                            <Plus size={14} />
+                            Add Another Word Rule
+                        </button>
+
+                        {pdfFiles.length > 0 && onScanMatches && (
+                            <button
+                                type="button"
+                                className="btn btn-secondary flex-center gap-xs"
+                                onClick={onScanMatches}
+                                disabled={scanningMatches}
+                                style={{ padding: '0.45rem 0.85rem', fontSize: '0.8rem' }}
+                            >
+                                {scanningMatches ? <RefreshCw size={14} className="animate-spin" /> : <Search size={14} />}
+                                {scanningMatches ? 'Scanning Documents…' : 'Scan & Preview Matches'}
+                            </button>
+                        )}
+                    </div>
+
+                    {/* Scanned Matches Preview Box */}
+                    {scannedMatches && scannedMatches.length > 0 && (
+                        <div className="scanned-matches-panel glass-panel animate-fade-in" style={{ marginTop: '1rem', padding: '1rem', background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)', borderRadius: 'var(--border-radius-md)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                                <span style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--accent-color)' }}>
+                                    Found {scannedMatches.length} match{scannedMatches.length === 1 ? '' : 'es'} across uploaded documents:
+                                </span>
+                            </div>
+                            <div style={{ maxHeight: '180px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                                {scannedMatches.map((m, idx) => (
+                                    <div key={idx} style={{ fontSize: '0.75rem', padding: '0.35rem 0.5rem', background: 'rgba(0,0,0,0.2)', borderRadius: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span>Page {m.page}: <em>"{m.snippet}"</em></span>
+                                        <span style={{ color: 'var(--accent-color)', fontWeight: 500 }}>➔ "{m.replaceText}"</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
         );
@@ -359,3 +591,4 @@ export default function FileUpload({
 
     return null;
 }
+

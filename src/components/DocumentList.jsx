@@ -1,8 +1,16 @@
-import { FileText, CheckCircle, AlertCircle, X, Download, Archive, MessageSquare } from 'lucide-react';
+import { FileText, CheckCircle, AlertCircle, X, Download, Archive, MessageSquare, Type, Edit3 } from 'lucide-react';
 import { saveAs } from 'file-saver';
 import JSZip from 'jszip';
 
-export default function DocumentList({ files, processedFiles, onRemove, processing, detectedComments = {}, onPreviewComments }) {
+export default function DocumentList({ 
+    files, 
+    processedFiles, 
+    onRemove, 
+    processing, 
+    detectedComments = {}, 
+    onPreviewComments,
+    onEditDocument
+}) {
 
     const getProcessedStatus = (file) => {
         // A super simple matcher based on file name or instance for demo purposes.
@@ -129,15 +137,28 @@ export default function DocumentList({ files, processedFiles, onRemove, processi
                                 </div>
                             </div>
 
-                            <div className="flex-center gap-md">
+                            <div className="flex-center gap-sm">
+                                {onEditDocument && (
+                                    <button
+                                        className="btn btn-secondary flex-center gap-xs"
+                                        style={{ padding: '0.4rem 0.65rem', fontSize: '0.75rem' }}
+                                        onClick={() => onEditDocument(file, index)}
+                                        title="Open Visual Studio to edit words and text"
+                                        disabled={processing}
+                                    >
+                                        <Edit3 size={14} color="var(--accent-color)" />
+                                        <span>Edit Words</span>
+                                    </button>
+                                )}
+
                                 {processed && processed.status === 'success' && (
                                     <button
                                         className="btn btn-primary"
-                                        style={{ padding: '0.5rem' }}
+                                        style={{ padding: '0.4rem 0.65rem' }}
                                         onClick={() => downloadFile(processed)}
                                         title="Download Signed PDF"
                                     >
-                                        <Download size={16} />
+                                        <Download size={15} />
                                     </button>
                                 )}
 
