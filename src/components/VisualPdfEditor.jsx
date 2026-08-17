@@ -2,17 +2,10 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
     X, Type, Eraser, Square, MousePointer, Plus, Trash2, 
     Undo2, Redo2, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, 
-    Check, Sparkles, RefreshCw, AlertCircle, Eye, Sliders
+    Check, Sparkles, RefreshCw, AlertCircle, Eye, Sliders, Search
 } from 'lucide-react';
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.js?url';
+import { pdfjsLib } from '../utils/pdfWorkerInit';
 import { applyVisualEditsToPDF } from '../utils/pdfProcessor';
-
-if (typeof window !== 'undefined' && pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
-    if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
-    }
-}
 
 export default function VisualPdfEditor({ file, onClose, onSave }) {
     const [numPages, setNumPages] = useState(1);
@@ -22,6 +15,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
     const [rendering, setRendering] = useState(false);
     const [saving, setSaving] = useState(false);
     const [activeTool, setActiveTool] = useState('select'); // 'select' | 'text' | 'whiteout' | 'redact'
+    const [showHighlights, setShowHighlights] = useState(true);
     
     // Edits per page { [pageNum]: [ { id, type, pdfX, pdfY, pdfWidth, pdfHeight, ... } ] }
     const [pageEdits, setPageEdits] = useState({});
@@ -30,7 +24,8 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
 
     // Text items for the active page
     const [pageTextItems, setPageTextItems] = useState([]);
-    const [pageDimensions, setPageDimensions] = useState({ width: 600, height: 800 });
+    const [pageDimensions, setPageDimensions] = useState({ width: 595, height: 842 });
+    const [searchFilter, setSearchFilter] = useState('');
 
     // Active popup for editing a selected word
     const [activeWordPopup, setActiveWordPopup] = useState(null);
@@ -51,6 +46,8 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
     const originalPdfBytesRef = useRef(null);
     const renderTaskRef = useRef(null);
     const currentViewportRef = useRef(null);
+    const isRenderingRef = useRef(false);
+    const pendingRenderRef = useRef(false);
 
     // 1. Load PDF Document once on mount
     useEffect(() => {
@@ -61,7 +58,6 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                 const buffer = await file.arrayBuffer();
                 originalPdfBytesRef.current = new Uint8Array(buffer);
                 
-                // Use slice() so the buffer is not detached
                 const loadingTask = pdfjsLib.getDocument({ 
                     data: originalPdfBytesRef.current.slice(),
                     cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/',
@@ -91,24 +87,31 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
         };
     }, [file, onClose]);
 
-    // 2. Render active page and extract text items
+    // 2. Safe, queue-based page rendering
     const renderPage = useCallback(async () => {
         if (!pdfDocRef.current || !canvasRef.current) return;
+
+        if (isRenderingRef.current) {
+            // Cancel current task and flag a pending render
+            if (renderTaskRef.current) {
+                try { renderTaskRef.current.cancel(); } catch (_) {}
+            }
+            pendingRenderRef.current = true;
+            return;
+        }
+
+        isRenderingRef.current = true;
         setRendering(true);
 
         try {
-            // Cancel any ongoing render task
-            if (renderTaskRef.current) {
-                try { renderTaskRef.current.cancel(); } catch (_) {}
-                renderTaskRef.current = null;
-            }
-
             const page = await pdfDocRef.current.getPage(currentPage);
             const viewport = page.getViewport({ scale: scale });
             currentViewportRef.current = viewport;
 
             const outputScale = window.devicePixelRatio || 1;
             const canvas = canvasRef.current;
+            if (!canvas) return;
+
             canvas.width = Math.floor(viewport.width * outputScale);
             canvas.height = Math.floor(viewport.height * outputScale);
             canvas.style.width = Math.floor(viewport.width) + 'px';
@@ -129,6 +132,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
             const renderTask = page.render(renderContext);
             renderTaskRef.current = renderTask;
             await renderTask.promise;
+            renderTaskRef.current = null;
 
             // Extract text items for this page
             const textContent = await page.getTextContent();
@@ -148,6 +152,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                 const [x2, y2] = viewport.convertToViewportPoint(tx + width, ty);
 
                 items.push({
+                    id: `w_${items.length}`,
                     str: item.str,
                     pdfX: tx,
                     pdfY: ty,
@@ -157,8 +162,8 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                     fontName: item.fontName,
                     boxX: Math.min(x1, x2),
                     boxY: Math.min(y1, y2),
-                    boxW: Math.max(10, Math.abs(x2 - x1)),
-                    boxH: Math.max(12, Math.abs(y2 - y1))
+                    boxW: Math.max(8, Math.abs(x2 - x1)),
+                    boxH: Math.max(10, Math.abs(y2 - y1))
                 });
             }
 
@@ -168,7 +173,13 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                 console.error('Error rendering page:', err);
             }
         } finally {
+            isRenderingRef.current = false;
             setRendering(false);
+
+            if (pendingRenderRef.current) {
+                pendingRenderRef.current = false;
+                renderPage();
+            }
         }
     }, [currentPage, scale]);
 
@@ -225,7 +236,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
 
     // Click on a detected word in 'select' mode
     const handleWordClick = (item, e) => {
-        e.stopPropagation();
+        if (e) e.stopPropagation();
 
         setActiveWordPopup({
             item,
@@ -371,7 +382,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
 
     // Remove a specific edit
     const handleRemoveEdit = (editId, e) => {
-        e.stopPropagation();
+        if (e) e.stopPropagation();
         const currentList = pageEdits[currentPage] || [];
         const nextList = currentList.filter(item => item.id !== editId);
         const nextEdits = {
@@ -418,6 +429,10 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
     const currentEdits = pageEdits[currentPage] || [];
     const totalEditsCount = Object.values(pageEdits).reduce((sum, arr) => sum + (arr ? arr.length : 0), 0);
     const viewport = currentViewportRef.current;
+
+    const filteredWords = searchFilter.trim() 
+        ? pageTextItems.filter(item => item.str.toLowerCase().includes(searchFilter.toLowerCase()))
+        : [];
 
     return (
         <div className="visual-editor-overlay animate-fade-in">
@@ -559,6 +574,15 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                         <Square size={16} />
                         <span>Redact (Blackout)</span>
                     </button>
+
+                    <label style={{ fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem', marginLeft: '0.5rem', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                        <input 
+                            type="checkbox"
+                            checked={showHighlights}
+                            onChange={(e) => setShowHighlights(e.target.checked)}
+                        />
+                        Word Outlines
+                    </label>
                 </div>
 
                 <div className="toolbar-hint">
@@ -613,9 +637,9 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                             onMouseUp={handleOverlayMouseUp}
                         >
                             {/* 1. Detected Word Hit Boxes (Select Mode) */}
-                            {activeTool === 'select' && pageTextItems.map((item, idx) => (
+                            {activeTool === 'select' && showHighlights && pageTextItems.map((item) => (
                                 <div
-                                    key={`word-${idx}`}
+                                    key={item.id}
                                     className="word-hit-box"
                                     style={{
                                         left: `${item.boxX}px`,

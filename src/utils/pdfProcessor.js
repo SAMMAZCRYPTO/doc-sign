@@ -1,10 +1,6 @@
 import { PDFDocument, PDFName, PDFString, PDFHexString, rgb, StandardFonts, degrees, PDFRawStream, PDFNumber, decodePDFRawStream } from 'pdf-lib';
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.js?url';
+import { pdfjsLib } from './pdfWorkerInit';
 
-if (typeof window !== 'undefined' && pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
-}
 
 /**
  * Sanitizes a string so that it can be safely encoded using standard PDF WinAnsi (Windows-1252) encoding.
