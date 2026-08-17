@@ -1041,6 +1041,50 @@ export function hexToRgb(hex) {
 }
 
 /**
+ * Intelligently analyzes a raw PDF font name to match the closest standard 14 PDF font.
+ * Detects Serif vs Sans vs Mono, as well as Bold and Italic/Oblique variants.
+ * 
+ * @param {string} rawFontName - Raw font identifier from PDF metadata
+ * @returns {string} - Matching StandardFont name
+ */
+export function matchPdfStandardFont(rawFontName) {
+    if (!rawFontName) return 'Helvetica';
+    const name = rawFontName.toLowerCase();
+
+    const isBold = name.includes('bold') || name.includes('black') || name.includes('heavy') || 
+                   name.includes('-bd') || name.includes('semibold') || name.includes('700') || 
+                   name.includes('800') || name.includes('900') || name.includes('b+');
+    const isItalic = name.includes('italic') || name.includes('oblique') || name.includes('-it') || 
+                     name.includes('slanted') || name.includes('inclined');
+
+    // 1. Monospace / Courier
+    if (name.includes('courier') || name.includes('mono') || name.includes('consolas') || 
+        name.includes('menlo') || name.includes('code') || name.includes('typewriter')) {
+        if (isBold && isItalic) return 'CourierBoldOblique';
+        if (isBold) return 'CourierBold';
+        if (isItalic) return 'CourierOblique';
+        return 'Courier';
+    }
+
+    // 2. Serif / Times Roman / Georgia / Garamond / Cambria
+    if (name.includes('times') || name.includes('serif') || name.includes('georgia') || 
+        name.includes('cambria') || name.includes('garamond') || name.includes('palatino') || 
+        name.includes('roman') || name.includes('minion') || name.includes('baskerville') || 
+        name.includes('bookman') || name.includes('century')) {
+        if (isBold && isItalic) return 'TimesRomanBoldItalic';
+        if (isBold) return 'TimesRomanBold';
+        if (isItalic) return 'TimesRomanItalic';
+        return 'TimesRoman';
+    }
+
+    // 3. Sans-Serif / Helvetica / Arial / Calibri / Open Sans / Roboto / Segoe
+    if (isBold && isItalic) return 'HelveticaBoldOblique';
+    if (isBold) return 'HelveticaBold';
+    if (isItalic) return 'HelveticaOblique';
+    return 'Helvetica';
+}
+
+/**
  * Maps font name strings to embedded StandardFonts in pdf-lib.
  */
 export async function getStandardFont(pdfDoc, fontName) {
@@ -1051,17 +1095,36 @@ export async function getStandardFont(pdfDoc, fontName) {
         case 'HelveticaOblique':
         case 'Helvetica-Oblique':
             return await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+        case 'HelveticaBoldOblique':
+        case 'Helvetica-BoldOblique':
+            return await pdfDoc.embedFont(StandardFonts.HelveticaBoldOblique);
         case 'TimesRoman':
         case 'Times-Roman':
             return await pdfDoc.embedFont(StandardFonts.TimesRoman);
         case 'TimesRomanBold':
         case 'Times-Bold':
             return await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+        case 'TimesRomanItalic':
+        case 'Times-Italic':
+            return await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
+        case 'TimesRomanBoldItalic':
+        case 'Times-BoldItalic':
+            return await pdfDoc.embedFont(StandardFonts.TimesRomanBoldItalic);
         case 'Courier':
             return await pdfDoc.embedFont(StandardFonts.Courier);
         case 'CourierBold':
         case 'Courier-Bold':
             return await pdfDoc.embedFont(StandardFonts.CourierBold);
+        case 'CourierOblique':
+        case 'Courier-Oblique':
+            return await pdfDoc.embedFont(StandardFonts.CourierOblique);
+        case 'CourierBoldOblique':
+        case 'Courier-BoldOblique':
+            return await pdfDoc.embedFont(StandardFonts.CourierBoldOblique);
+        case 'Symbol':
+            return await pdfDoc.embedFont(StandardFonts.Symbol);
+        case 'ZapfDingbats':
+            return await pdfDoc.embedFont(StandardFonts.ZapfDingbats);
         case 'Helvetica':
         default:
             return await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -1351,9 +1414,10 @@ export async function applyVisualEditsToPDF(pdfBuffer, pageEdits = {}) {
 
         for (const edit of edits) {
             if (edit.type === 'replace_word' || edit.type === 'text_box') {
-                const font = await getFont(edit.fontFamily || 'Helvetica');
+                const targetFontName = matchPdfStandardFont(edit.fontFamily || edit.fontName);
+                const font = await getFont(targetFontName);
                 const color = hexToRgb(edit.textColor || '#000000') || rgb(0, 0, 0);
-                const size = edit.fontSize || 12;
+                const size = Number(edit.fontSize) || 11;
                 const sanitizedText = sanitizeTextForWinAnsi(edit.text || '');
 
                 let textWidth = edit.pdfWidth || 0;
@@ -1363,21 +1427,25 @@ export async function applyVisualEditsToPDF(pdfBuffer, pageEdits = {}) {
                     } catch (_) {}
                 }
 
+                // Typography bounds: baseline at pdfY, descenders at -0.28*size, ascenders at +0.88*size
+                const descenderPad = size * 0.28;
+                const totalH = size * 1.16;
+                const maskY = edit.pdfY - descenderPad;
+                const maskW = Math.max(edit.pdfWidth || 0, textWidth) + 2.5;
+
                 // Background mask
                 if (edit.bgFill && edit.bgFill !== 'transparent' && edit.bgFill !== 'none') {
                     const bgColor = hexToRgb(edit.bgFill) || rgb(1, 1, 1);
-                    const maskW = Math.max(edit.pdfWidth || 0, textWidth) + 3;
-                    const maskH = Math.max(edit.pdfHeight || 0, size) + 4;
                     page.drawRectangle({
-                        x: edit.pdfX - 1,
-                        y: edit.pdfY - 2,
+                        x: edit.pdfX - 0.75,
+                        y: maskY,
                         width: maskW,
-                        height: maskH,
+                        height: Math.max(edit.pdfHeight || 0, totalH),
                         color: bgColor
                     });
                 }
 
-                // Text overlay
+                // Text overlay at EXACT baseline
                 if (sanitizedText) {
                     page.drawText(sanitizedText, {
                         x: edit.pdfX,

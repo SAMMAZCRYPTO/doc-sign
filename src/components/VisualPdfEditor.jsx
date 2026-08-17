@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
-    X, Type, Eraser, Square, MousePointer, Plus, Trash2, 
+    X, Type, Eraser, Square, MousePointer, Plus, Minus, Trash2, 
     Undo2, Redo2, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, 
-    Check, Download, RefreshCw, Eye
+    Check, Download, RefreshCw, Eye, Sparkles
 } from 'lucide-react';
 import { saveAs } from 'file-saver';
 import { pdfjsLib } from '../utils/pdfWorkerInit';
-import { applyVisualEditsToPDF } from '../utils/pdfProcessor';
+import { applyVisualEditsToPDF, matchPdfStandardFont } from '../utils/pdfProcessor';
 
 export default function VisualPdfEditor({ file, onClose, onSave }) {
     const [numPages, setNumPages] = useState(1);
@@ -30,7 +30,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
 
     // Active INLINE editing item (rendered directly on the canvas)
     const [activeInlineEdit, setActiveInlineEdit] = useState(null);
-    // { editId, isNew, originalText, text, fontSize, fontFamily, textColor, bgFill, pdfX, pdfY, pdfWidth, pdfHeight, boxX, boxY, boxW, boxH }
+    // { editId, isNew, originalText, text, fontSize, fontFamily, fontName, textColor, bgFill, pdfX, pdfY, pdfWidth, pdfHeight, boxX, boxY, boxW, boxH }
 
     // Drawing state for drag-to-create rectangles
     const [isDrawing, setIsDrawing] = useState(false);
@@ -147,6 +147,9 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                 const [x1, y1] = viewport.convertToViewportPoint(tx, ty + height);
                 const [x2, y2] = viewport.convertToViewportPoint(tx + width, ty);
 
+                // Auto-detect matching PDF Standard Font
+                const matchedFont = matchPdfStandardFont(item.fontName);
+
                 items.push({
                     id: `w_${items.length}`,
                     str: item.str,
@@ -156,6 +159,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                     height: height,
                     fontSize: fontSize,
                     fontName: item.fontName,
+                    matchedFont: matchedFont,
                     boxX: Math.min(x1, x2),
                     boxY: Math.min(y1, y2),
                     boxW: Math.max(8, Math.abs(x2 - x1)),
@@ -185,7 +189,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
         }
     }, [loading, currentPage, scale, renderPage]);
 
-    // Auto-focus inline input when opened
+    // Auto-focus and select all text in the inline input when opened
     useEffect(() => {
         if (activeInlineEdit && inlineInputRef.current) {
             inlineInputRef.current.focus();
@@ -237,11 +241,11 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
         };
     };
 
-    // Click on a word -> turn directly into INLINE editable box
+    // Click on a word -> open INLINE editor with auto-detected matching font & size
     const handleWordClick = (item, e) => {
         if (e) e.stopPropagation();
 
-        // Commit any previous inline edit first
+        // Commit any previous inline edit
         if (activeInlineEdit) {
             commitInlineEdit();
         }
@@ -251,13 +255,17 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
             Math.abs(ed.pdfX - item.pdfX) < 3 && Math.abs(ed.pdfY - item.pdfY) < 3
         );
 
+        const detectedFont = item.matchedFont || matchPdfStandardFont(item.fontName);
+        const preciseSize = item.fontSize ? Number(item.fontSize.toFixed(1)) : 11;
+
         setActiveInlineEdit({
             editId: existingEdit ? existingEdit.id : `edit_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
             isNew: !existingEdit,
             originalText: item.str,
             text: existingEdit ? existingEdit.text : item.str,
-            fontSize: existingEdit ? existingEdit.fontSize : (Math.round(item.fontSize) || 11),
-            fontFamily: existingEdit ? existingEdit.fontFamily : (item.fontName?.toLowerCase().includes('bold') ? 'HelveticaBold' : 'Helvetica'),
+            fontSize: existingEdit ? existingEdit.fontSize : preciseSize,
+            fontFamily: existingEdit ? existingEdit.fontFamily : detectedFont,
+            fontName: item.fontName,
             textColor: existingEdit ? existingEdit.textColor : '#000000',
             bgFill: '#ffffff',
             pdfX: item.pdfX,
@@ -275,9 +283,8 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
     const commitInlineEdit = () => {
         if (!activeInlineEdit) return;
 
-        const { editId, text, originalText, fontSize, fontFamily, textColor, bgFill, pdfX, pdfY, pdfWidth, pdfHeight } = activeInlineEdit;
+        const { editId, text, originalText, fontSize, fontFamily, fontName, textColor, bgFill, pdfX, pdfY, pdfWidth, pdfHeight } = activeInlineEdit;
 
-        // If text was changed or it's a new edit with text
         if (text && text.trim()) {
             const newEdit = {
                 id: editId,
@@ -285,7 +292,8 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                 originalText: originalText,
                 text: text,
                 fontSize: Number(fontSize) || 11,
-                fontFamily: fontFamily || 'Helvetica',
+                fontFamily: fontFamily || matchPdfStandardFont(fontName),
+                fontName: fontName,
                 textColor: textColor || '#000000',
                 bgFill: bgFill || '#ffffff',
                 pdfX: pdfX,
@@ -463,6 +471,14 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
         }
     };
 
+    // Helper for CSS font styling
+    const getCssFontFamily = (fontFamily) => {
+        if (!fontFamily) return 'sans-serif';
+        if (fontFamily.startsWith('Times')) return '"Times New Roman", Times, serif';
+        if (fontFamily.startsWith('Courier')) return '"Courier New", Courier, monospace';
+        return 'Arial, Helvetica, sans-serif';
+    };
+
     const currentEdits = pageEdits[currentPage] || [];
     const totalEditsCount = Object.values(pageEdits).reduce((sum, arr) => sum + (arr ? arr.length : 0), 0);
     const viewport = currentViewportRef.current;
@@ -478,7 +494,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                     <div>
                         <h2 className="editor-title">{file.name}</h2>
                         <span className="editor-subtitle">
-                            Direct In-Document Editor • {totalEditsCount} change{totalEditsCount === 1 ? '' : 's'} made
+                            Pixel-Perfect PDF Studio • {totalEditsCount} change{totalEditsCount === 1 ? '' : 's'} staged
                         </span>
                     </div>
                 </div>
@@ -643,7 +659,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
 
                 <div className="toolbar-hint">
                     {activeTool === 'select' && (
-                        <span>✨ <strong>Click directly on any word</strong> on the document below to type replacement text.</span>
+                        <span>✨ <strong>Click directly on any word</strong> on the document below to edit it in matching font and size.</span>
                     )}
                     {activeTool === 'text' && (
                         <span>✨ <strong>Drag a rectangle</strong> on the document to place a new text box.</span>
@@ -704,7 +720,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                         height: `${item.boxH}px`
                                     }}
                                     onClick={(e) => handleWordClick(item, e)}
-                                    title={`Click to edit: "${item.str}"`}
+                                    title={`Click to edit: "${item.str}" (Font: ${item.matchedFont})`}
                                 />
                             ))}
 
@@ -774,15 +790,16 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                             key={edit.id}
                                             className="applied-edit-box text-patch"
                                             style={{
-                                                left: `${boxX - 2}px`,
-                                                top: `${boxY - 2}px`,
-                                                minWidth: `${boxW + 4}px`,
-                                                minHeight: `${boxH + 4}px`,
+                                                left: `${boxX - 1}px`,
+                                                top: `${boxY - 1}px`,
+                                                minWidth: `${boxW + 2}px`,
+                                                minHeight: `${boxH + 2}px`,
                                                 backgroundColor: edit.bgFill !== 'transparent' ? (edit.bgFill || '#ffffff') : 'transparent',
                                                 color: edit.textColor || '#000000',
                                                 fontSize: `${(edit.fontSize || 11) * scale}px`,
-                                                fontFamily: edit.fontFamily === 'Courier' ? 'monospace' : edit.fontFamily === 'TimesRoman' ? 'serif' : 'sans-serif',
+                                                fontFamily: getCssFontFamily(edit.fontFamily),
                                                 fontWeight: edit.fontFamily?.includes('Bold') ? 700 : 400,
+                                                fontStyle: (edit.fontFamily?.includes('Italic') || edit.fontFamily?.includes('Oblique')) ? 'italic' : 'normal',
                                                 cursor: 'pointer'
                                             }}
                                             onClick={(e) => {
@@ -794,7 +811,8 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                                     width: edit.pdfWidth,
                                                     height: edit.pdfHeight,
                                                     fontSize: edit.fontSize,
-                                                    fontName: edit.fontFamily,
+                                                    fontName: edit.fontName || edit.fontFamily,
+                                                    matchedFont: edit.fontFamily,
                                                     boxX, boxY, boxW, boxH
                                                 }, e);
                                             }}
@@ -832,34 +850,60 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                 <div 
                                     className="inline-edit-wrapper animate-scale-up"
                                     style={{
-                                        left: `${activeInlineEdit.boxX - 4}px`,
-                                        top: `${activeInlineEdit.boxY - 4}px`,
+                                        left: `${activeInlineEdit.boxX - 2}px`,
+                                        top: `${activeInlineEdit.boxY - 2}px`,
                                         zIndex: 200
                                     }}
+                                    onMouseDown={(e) => e.stopPropagation()}
                                     onClick={(e) => e.stopPropagation()}
                                 >
                                     {/* Mini Attached Floating Format Toolbar */}
-                                    <div className="inline-micro-toolbar">
+                                    <div className="inline-micro-toolbar" onMouseDown={(e) => e.stopPropagation()}>
                                         <select
                                             className="micro-select"
                                             value={activeInlineEdit.fontFamily}
                                             onChange={(e) => setActiveInlineEdit(prev => ({ ...prev, fontFamily: e.target.value }))}
+                                            title="Font Family"
                                         >
-                                            <option value="Helvetica">Helvetica</option>
+                                            <option value="Helvetica">Helvetica (Arial / Sans)</option>
                                             <option value="HelveticaBold">Helvetica Bold</option>
-                                            <option value="TimesRoman">Times Roman</option>
-                                            <option value="Courier">Courier</option>
+                                            <option value="HelveticaOblique">Helvetica Italic</option>
+                                            <option value="HelveticaBoldOblique">Helvetica Bold Italic</option>
+                                            <option value="TimesRoman">Times Roman (Serif)</option>
+                                            <option value="TimesRomanBold">Times Roman Bold</option>
+                                            <option value="TimesRomanItalic">Times Roman Italic</option>
+                                            <option value="TimesRomanBoldItalic">Times Bold Italic</option>
+                                            <option value="Courier">Courier (Monospace)</option>
+                                            <option value="CourierBold">Courier Bold</option>
                                         </select>
+
+                                        {/* Font Size Step Controls */}
+                                        <button 
+                                            className="micro-btn" 
+                                            onClick={() => setActiveInlineEdit(prev => ({ ...prev, fontSize: Math.max(6, Number((prev.fontSize - 0.5).toFixed(1))) }))}
+                                            title="Decrease Font Size (-0.5pt)"
+                                        >
+                                            <Minus size={12} />
+                                        </button>
 
                                         <input
                                             type="number"
+                                            step="0.5"
                                             className="micro-number"
                                             min="6"
                                             max="72"
                                             value={activeInlineEdit.fontSize}
                                             onChange={(e) => setActiveInlineEdit(prev => ({ ...prev, fontSize: Number(e.target.value) }))}
-                                            title="Font Size"
+                                            title="Font Size (Points)"
                                         />
+
+                                        <button 
+                                            className="micro-btn" 
+                                            onClick={() => setActiveInlineEdit(prev => ({ ...prev, fontSize: Math.min(72, Number((prev.fontSize + 0.5).toFixed(1))) }))}
+                                            title="Increase Font Size (+0.5pt)"
+                                        >
+                                            <Plus size={12} />
+                                        </button>
 
                                         <input
                                             type="color"
@@ -883,20 +927,25 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                                 handleRemoveEdit(activeInlineEdit.editId);
                                                 setActiveInlineEdit(null);
                                             }}
-                                            title="Discard"
+                                            title="Discard (Esc)"
                                         >
                                             <Trash2 size={13} />
                                         </button>
                                     </div>
 
-                                    {/* Direct In-Place Input Box */}
+                                    {/* Direct In-Place Input Box (Unconstrained Width & Exact Font Matching) */}
                                     <input
                                         ref={inlineInputRef}
                                         type="text"
                                         className="direct-inline-input"
                                         value={activeInlineEdit.text}
+                                        autoComplete="off"
+                                        spellCheck="false"
+                                        onMouseDown={(e) => e.stopPropagation()}
+                                        onClick={(e) => e.stopPropagation()}
                                         onChange={(e) => setActiveInlineEdit(prev => ({ ...prev, text: e.target.value }))}
                                         onKeyDown={(e) => {
+                                            e.stopPropagation();
                                             if (e.key === 'Enter') {
                                                 e.preventDefault();
                                                 commitInlineEdit();
@@ -906,11 +955,12 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                         }}
                                         style={{
                                             fontSize: `${(activeInlineEdit.fontSize || 11) * scale}px`,
-                                            fontFamily: activeInlineEdit.fontFamily === 'Courier' ? 'monospace' : activeInlineEdit.fontFamily === 'TimesRoman' ? 'serif' : 'sans-serif',
+                                            fontFamily: getCssFontFamily(activeInlineEdit.fontFamily),
                                             fontWeight: activeInlineEdit.fontFamily?.includes('Bold') ? 700 : 400,
+                                            fontStyle: (activeInlineEdit.fontFamily?.includes('Italic') || activeInlineEdit.fontFamily?.includes('Oblique')) ? 'italic' : 'normal',
                                             color: activeInlineEdit.textColor,
-                                            minWidth: `${Math.max(activeInlineEdit.boxW + 12, 60)}px`,
-                                            height: `${Math.max(activeInlineEdit.boxH + 8, 24)}px`
+                                            width: `${Math.max(activeInlineEdit.boxW + 24, (activeInlineEdit.text.length * (activeInlineEdit.fontSize || 11) * scale * 0.65) + 30)}px`,
+                                            height: `${Math.max(activeInlineEdit.boxH + 6, 22)}px`
                                         }}
                                     />
                                 </div>
