@@ -1055,13 +1055,22 @@ body {
 }
 
 .direct-inline-input {
-  background: #ffffff !important;
+  background: rgba(255, 255, 255, 0.97) !important;
   border: 2px solid var(--accent-color) !important;
   border-radius: 3px;
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.35), 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3), 0 4px 12px rgba(0, 0, 0, 0.25);
   outline: none !important;
   padding: 0 4px;
   box-sizing: border-box;
   display: block;
+  white-space: nowrap;
+  overflow: visible;
+  line-height: 1;
+  letter-spacing: normal;
+  transition: width 0.05s ease;
+}
+
+[data-theme='light'] .direct-inline-input {
+  background: rgba(255, 255, 255, 0.99) !important;
 }
 

@@ -31,6 +31,8 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
     // Active INLINE editing item (rendered directly on the canvas)
     const [activeInlineEdit, setActiveInlineEdit] = useState(null);
     // { editId, isNew, originalText, text, fontSize, fontFamily, fontName, textColor, bgFill, pdfX, pdfY, pdfWidth, pdfHeight, boxX, boxY, boxW, boxH }
+    const [inlineInputWidth, setInlineInputWidth] = useState(80);
+    const inlineSizerRef = useRef(null);
 
     // Drawing state for drag-to-create rectangles
     const [isDrawing, setIsDrawing] = useState(false);
@@ -195,7 +197,19 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
             inlineInputRef.current.focus();
             inlineInputRef.current.select();
         }
+        // Also reset width to sizer width when edit opens
+        if (activeInlineEdit && inlineSizerRef.current) {
+            setInlineInputWidth(Math.max(inlineSizerRef.current.offsetWidth + 20, activeInlineEdit.boxW + 4));
+        }
     }, [activeInlineEdit]);
+
+    // Grow the input width as the user types using hidden sizer
+    useEffect(() => {
+        if (activeInlineEdit && inlineSizerRef.current) {
+            const sizerW = inlineSizerRef.current.offsetWidth;
+            setInlineInputWidth(Math.max(sizerW + 20, activeInlineEdit.boxW + 4));
+        }
+    }, [activeInlineEdit?.text, activeInlineEdit?.fontSize, activeInlineEdit?.fontFamily, scale]);
 
     // Push state to undo history
     const pushHistory = (newEdits) => {
@@ -471,12 +485,25 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
         }
     };
 
-    // Helper for CSS font styling
+    // Helper for CSS font styling — maps PDF standard font names to CSS equivalents
     const getCssFontFamily = (fontFamily) => {
-        if (!fontFamily) return 'sans-serif';
-        if (fontFamily.startsWith('Times')) return '"Times New Roman", Times, serif';
-        if (fontFamily.startsWith('Courier')) return '"Courier New", Courier, monospace';
+        if (!fontFamily) return 'Arial, Helvetica, sans-serif';
+        const f = fontFamily.toLowerCase();
+        if (f.includes('times') || f.includes('roman') || f.includes('serif')) return '"Times New Roman", Times, serif';
+        if (f.includes('courier') || f.includes('mono')) return '"Courier New", Courier, monospace';
         return 'Arial, Helvetica, sans-serif';
+    };
+
+    const getCssFontWeight = (fontFamily) => {
+        if (!fontFamily) return 400;
+        const f = fontFamily.toLowerCase();
+        return (f.includes('bold') || f.includes('heavy') || f.includes('black')) ? 700 : 400;
+    };
+
+    const getCssFontStyle = (fontFamily) => {
+        if (!fontFamily) return 'normal';
+        const f = fontFamily.toLowerCase();
+        return (f.includes('italic') || f.includes('oblique')) ? 'italic' : 'normal';
     };
 
     const currentEdits = pageEdits[currentPage] || [];
@@ -798,9 +825,12 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                                 color: edit.textColor || '#000000',
                                                 fontSize: `${(edit.fontSize || 11) * scale}px`,
                                                 fontFamily: getCssFontFamily(edit.fontFamily),
-                                                fontWeight: edit.fontFamily?.includes('Bold') ? 700 : 400,
-                                                fontStyle: (edit.fontFamily?.includes('Italic') || edit.fontFamily?.includes('Oblique')) ? 'italic' : 'normal',
-                                                cursor: 'pointer'
+                                                fontWeight: getCssFontWeight(edit.fontFamily),
+                                                fontStyle: getCssFontStyle(edit.fontFamily),
+                                                lineHeight: 1,
+                                                cursor: 'pointer',
+                                                whiteSpace: 'nowrap',
+                                                overflow: 'visible'
                                             }}
                                             onClick={(e) => {
                                                 e.stopPropagation();
@@ -817,7 +847,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                                 }, e);
                                             }}
                                         >
-                                            <span>{edit.text}</span>
+                                            <span style={{ whiteSpace: 'nowrap' }}>{edit.text}</span>
                                             <button 
                                                 className="remove-patch-btn" 
                                                 onClick={(e) => handleRemoveEdit(edit.id, e)}
@@ -933,7 +963,27 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                         </button>
                                     </div>
 
-                                    {/* Direct In-Place Input Box (Unconstrained Width & Exact Font Matching) */}
+                                    {/* Hidden sizer span — mirrors the input text to measure true pixel width */}
+                                    <span
+                                        ref={inlineSizerRef}
+                                        aria-hidden="true"
+                                        style={{
+                                            position: 'absolute',
+                                            visibility: 'hidden',
+                                            whiteSpace: 'pre',
+                                            pointerEvents: 'none',
+                                            fontSize: `${(activeInlineEdit.fontSize || 11) * scale}px`,
+                                            fontFamily: getCssFontFamily(activeInlineEdit.fontFamily),
+                                            fontWeight: getCssFontWeight(activeInlineEdit.fontFamily),
+                                            fontStyle: getCssFontStyle(activeInlineEdit.fontFamily),
+                                            letterSpacing: 'normal',
+                                            padding: '0 4px'
+                                        }}
+                                    >
+                                        {activeInlineEdit.text || ' '}
+                                    </span>
+
+                                    {/* Direct In-Place Input Box — auto-grows with text, matches PDF font exactly */}
                                     <input
                                         ref={inlineInputRef}
                                         type="text"
@@ -956,11 +1006,13 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                         style={{
                                             fontSize: `${(activeInlineEdit.fontSize || 11) * scale}px`,
                                             fontFamily: getCssFontFamily(activeInlineEdit.fontFamily),
-                                            fontWeight: activeInlineEdit.fontFamily?.includes('Bold') ? 700 : 400,
-                                            fontStyle: (activeInlineEdit.fontFamily?.includes('Italic') || activeInlineEdit.fontFamily?.includes('Oblique')) ? 'italic' : 'normal',
+                                            fontWeight: getCssFontWeight(activeInlineEdit.fontFamily),
+                                            fontStyle: getCssFontStyle(activeInlineEdit.fontFamily),
                                             color: activeInlineEdit.textColor,
-                                            width: `${Math.max(activeInlineEdit.boxW + 24, (activeInlineEdit.text.length * (activeInlineEdit.fontSize || 11) * scale * 0.65) + 30)}px`,
-                                            height: `${Math.max(activeInlineEdit.boxH + 6, 22)}px`
+                                            width: `${inlineInputWidth}px`,
+                                            minWidth: `${activeInlineEdit.boxW + 4}px`,
+                                            height: `${Math.max(activeInlineEdit.boxH + 4, (activeInlineEdit.fontSize || 11) * scale + 8)}px`,
+                                            lineHeight: 1
                                         }}
                                     />
                                 </div>
