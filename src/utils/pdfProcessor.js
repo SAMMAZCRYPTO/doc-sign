@@ -1110,8 +1110,13 @@ export function parsePageRanges(rangeStr, totalPages) {
  * @returns {Promise<Object>} - Object with page count and pagesData containing extracted text items
  */
 export async function extractTextItemsFromPDF(pdfBuffer) {
-    const rawBytes = pdfBuffer instanceof Uint8Array ? pdfBuffer : new Uint8Array(pdfBuffer);
-    const loadingTask = pdfjsLib.getDocument({ data: rawBytes });
+    const rawBytes = pdfBuffer instanceof Uint8Array ? pdfBuffer.slice() : new Uint8Array(pdfBuffer).slice();
+    const loadingTask = pdfjsLib.getDocument({ 
+        data: rawBytes,
+        cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/',
+        cMapPacked: true,
+        standardFontDataUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/standard_fonts/'
+    });
     const pdf = await loadingTask.promise;
     const numPages = pdf.numPages;
     const pagesData = {};
@@ -1398,30 +1403,33 @@ export async function applyVisualEditsToPDF(pdfBuffer, pageEdits = {}) {
     return await pdfDoc.save();
 }
 
-/**
- * Renders a specific PDF page to an HTML5 canvas element at a target scale.
- * 
- * @param {ArrayBuffer|Uint8Array} pdfBuffer - Input PDF bytes
- * @param {number} pageNum - 1-based page number
- * @param {HTMLCanvasElement} canvas - The target canvas element
- * @param {number} scale - Viewport scale factor (default: 1.5)
- * @returns {Promise<Object>} - Render metadata { width, height, scale, page, viewport, numPages }
- */
 export async function renderPdfPageToCanvas(pdfBuffer, pageNum, canvas, scale = 1.5) {
     if (!canvas) return null;
-    const rawBytes = pdfBuffer instanceof Uint8Array ? pdfBuffer : new Uint8Array(pdfBuffer);
-    const loadingTask = pdfjsLib.getDocument({ data: rawBytes });
+    const rawBytes = pdfBuffer instanceof Uint8Array ? pdfBuffer.slice() : new Uint8Array(pdfBuffer).slice();
+    const loadingTask = pdfjsLib.getDocument({ 
+        data: rawBytes,
+        cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/',
+        cMapPacked: true,
+        standardFontDataUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/standard_fonts/'
+    });
     const pdf = await loadingTask.promise;
     const page = await pdf.getPage(pageNum);
     const viewport = page.getViewport({ scale: scale });
+    const outputScale = window.devicePixelRatio || 1;
 
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
+    canvas.width = Math.floor(viewport.width * outputScale);
+    canvas.height = Math.floor(viewport.height * outputScale);
+    canvas.style.width = Math.floor(viewport.width) + 'px';
+    canvas.style.height = Math.floor(viewport.height) + 'px';
 
     const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null;
     const renderContext = {
         canvasContext: ctx,
-        viewport: viewport
+        viewport: viewport,
+        transform: transform
     };
 
     await page.render(renderContext).promise;

@@ -2,30 +2,35 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
     X, Type, Eraser, Square, MousePointer, Plus, Trash2, 
     Undo2, Redo2, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, 
-    Check, Sparkles, RefreshCw, AlertCircle, Eye
+    Check, Sparkles, RefreshCw, AlertCircle, Eye, Sliders
 } from 'lucide-react';
-import { 
-    renderPdfPageToCanvas, 
-    extractTextItemsFromPDF, 
-    applyVisualEditsToPDF 
-} from '../utils/pdfProcessor';
+import * as pdfjsLib from 'pdfjs-dist';
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.js?url';
+import { applyVisualEditsToPDF } from '../utils/pdfProcessor';
+
+if (typeof window !== 'undefined' && pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+    if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+    }
+}
 
 export default function VisualPdfEditor({ file, onClose, onSave }) {
     const [numPages, setNumPages] = useState(1);
     const [currentPage, setCurrentPage] = useState(1);
-    const [scale, setScale] = useState(1.4);
+    const [scale, setScale] = useState(1.3);
     const [loading, setLoading] = useState(true);
+    const [rendering, setRendering] = useState(false);
     const [saving, setSaving] = useState(false);
     const [activeTool, setActiveTool] = useState('select'); // 'select' | 'text' | 'whiteout' | 'redact'
     
-    // Edits structured as { [pageNum]: [ { id, type, pdfX, pdfY, pdfWidth, pdfHeight, canvasX, canvasY, canvasWidth, canvasHeight, ... } ] }
+    // Edits per page { [pageNum]: [ { id, type, pdfX, pdfY, pdfWidth, pdfHeight, ... } ] }
     const [pageEdits, setPageEdits] = useState({});
     const [history, setHistory] = useState([]);
     const [historyIndex, setHistoryIndex] = useState(-1);
 
-    // Text extraction data for the whole document
-    const [pdfTextData, setPdfTextData] = useState(null);
-    const [viewportInfo, setViewportInfo] = useState(null);
+    // Text items for the active page
+    const [pageTextItems, setPageTextItems] = useState([]);
+    const [pageDimensions, setPageDimensions] = useState({ width: 600, height: 800 });
 
     // Active popup for editing a selected word
     const [activeWordPopup, setActiveWordPopup] = useState(null);
@@ -42,22 +47,33 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
 
     const canvasRef = useRef(null);
     const overlayRef = useRef(null);
-    const pdfBufferRef = useRef(null);
+    const pdfDocRef = useRef(null);
+    const originalPdfBytesRef = useRef(null);
+    const renderTaskRef = useRef(null);
+    const currentViewportRef = useRef(null);
 
-    // Load PDF buffer & text data on mount
+    // 1. Load PDF Document once on mount
     useEffect(() => {
         let isMounted = true;
         async function loadPdf() {
             setLoading(true);
             try {
                 const buffer = await file.arrayBuffer();
-                pdfBufferRef.current = new Uint8Array(buffer);
+                originalPdfBytesRef.current = new Uint8Array(buffer);
                 
-                const textData = await extractTextItemsFromPDF(pdfBufferRef.current);
-                if (isMounted) {
-                    setPdfTextData(textData);
-                    setNumPages(textData.numPages || 1);
-                }
+                // Use slice() so the buffer is not detached
+                const loadingTask = pdfjsLib.getDocument({ 
+                    data: originalPdfBytesRef.current.slice(),
+                    cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/',
+                    cMapPacked: true,
+                    standardFontDataUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/standard_fonts/'
+                });
+                
+                const pdf = await loadingTask.promise;
+                if (!isMounted) return;
+
+                pdfDocRef.current = pdf;
+                setNumPages(pdf.numPages || 1);
             } catch (err) {
                 console.error('Failed to load PDF for visual editor:', err);
                 alert('Could not open PDF in editor: ' + err.message);
@@ -67,22 +83,97 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
             }
         }
         loadPdf();
-        return () => { isMounted = false; };
+        return () => { 
+            isMounted = false; 
+            if (renderTaskRef.current) {
+                try { renderTaskRef.current.cancel(); } catch (_) {}
+            }
+        };
     }, [file, onClose]);
 
-    // Render current page onto canvas
+    // 2. Render active page and extract text items
     const renderPage = useCallback(async () => {
-        if (!pdfBufferRef.current || !canvasRef.current) return;
+        if (!pdfDocRef.current || !canvasRef.current) return;
+        setRendering(true);
+
         try {
-            const info = await renderPdfPageToCanvas(pdfBufferRef.current, currentPage, canvasRef.current, scale);
-            setViewportInfo(info);
+            // Cancel any ongoing render task
+            if (renderTaskRef.current) {
+                try { renderTaskRef.current.cancel(); } catch (_) {}
+                renderTaskRef.current = null;
+            }
+
+            const page = await pdfDocRef.current.getPage(currentPage);
+            const viewport = page.getViewport({ scale: scale });
+            currentViewportRef.current = viewport;
+
+            const outputScale = window.devicePixelRatio || 1;
+            const canvas = canvasRef.current;
+            canvas.width = Math.floor(viewport.width * outputScale);
+            canvas.height = Math.floor(viewport.height * outputScale);
+            canvas.style.width = Math.floor(viewport.width) + 'px';
+            canvas.style.height = Math.floor(viewport.height) + 'px';
+
+            setPageDimensions({ width: viewport.width, height: viewport.height });
+
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null;
+            const renderContext = {
+                canvasContext: ctx,
+                viewport: viewport,
+                transform: transform
+            };
+
+            const renderTask = page.render(renderContext);
+            renderTaskRef.current = renderTask;
+            await renderTask.promise;
+
+            // Extract text items for this page
+            const textContent = await page.getTextContent();
+            const items = [];
+
+            for (const item of textContent.items) {
+                if (!item.str || !item.str.trim()) continue;
+                const transform = item.transform; // [scaleX, skewY, skewX, scaleY, tx, ty]
+                const tx = transform[4];
+                const ty = transform[5];
+                const fontSize = Math.hypot(transform[0], transform[1]) || item.height || 10;
+                const width = item.width || (fontSize * item.str.length * 0.5);
+                const height = fontSize;
+
+                // Viewport coordinates
+                const [x1, y1] = viewport.convertToViewportPoint(tx, ty + height);
+                const [x2, y2] = viewport.convertToViewportPoint(tx + width, ty);
+
+                items.push({
+                    str: item.str,
+                    pdfX: tx,
+                    pdfY: ty,
+                    width: width,
+                    height: height,
+                    fontSize: fontSize,
+                    fontName: item.fontName,
+                    boxX: Math.min(x1, x2),
+                    boxY: Math.min(y1, y2),
+                    boxW: Math.max(10, Math.abs(x2 - x1)),
+                    boxH: Math.max(12, Math.abs(y2 - y1))
+                });
+            }
+
+            setPageTextItems(items);
         } catch (err) {
-            console.error('Error rendering page:', err);
+            if (err?.name !== 'RenderingCancelledException') {
+                console.error('Error rendering page:', err);
+            }
+        } finally {
+            setRendering(false);
         }
     }, [currentPage, scale]);
 
     useEffect(() => {
-        if (!loading && pdfBufferRef.current) {
+        if (!loading && pdfDocRef.current) {
             renderPage();
         }
     }, [loading, currentPage, scale, renderPage]);
@@ -118,10 +209,9 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
 
     // Calculate PDF point coordinates from canvas overlay pixels
     const canvasToPdfCoords = (cx, cy, cWidth, cHeight) => {
-        if (!viewportInfo) return { pdfX: cx, pdfY: cy, pdfWidth: cWidth, pdfHeight: cHeight };
-        const { viewport } = viewportInfo;
+        const viewport = currentViewportRef.current;
+        if (!viewport) return { pdfX: cx, pdfY: cy, pdfWidth: cWidth, pdfHeight: cHeight };
         
-        // Convert top-left and bottom-right points
         const [pdfX1, pdfY1] = viewport.convertToPdfPoint(cx, cy);
         const [pdfX2, pdfY2] = viewport.convertToPdfPoint(cx + cWidth, cy + cHeight);
 
@@ -136,19 +226,18 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
     // Click on a detected word in 'select' mode
     const handleWordClick = (item, e) => {
         e.stopPropagation();
-        const currentScale = scale;
 
         setActiveWordPopup({
             item,
-            canvasX: item.canvasX * currentScale,
-            canvasY: item.canvasY * currentScale,
-            canvasW: item.canvasWidth * currentScale,
-            canvasH: item.canvasHeight * currentScale,
+            canvasX: item.boxX,
+            canvasY: item.boxY,
+            canvasW: item.boxW,
+            canvasH: item.boxH
         });
 
         setWordInputText(item.str);
         setWordFontSize(Math.round(item.fontSize) || 11);
-        setWordFontFamily('Helvetica');
+        setWordFontFamily(item.fontName?.toLowerCase().includes('bold') ? 'HelveticaBold' : 'Helvetica');
         setWordTextColor('#000000');
         setWordBgFill('#ffffff');
     };
@@ -173,10 +262,6 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
             pdfY: item.pdfY,
             pdfWidth: item.width,
             pdfHeight: item.height,
-            canvasX: activeWordPopup.canvasX,
-            canvasY: activeWordPopup.canvasY,
-            canvasWidth: activeWordPopup.canvasW,
-            canvasHeight: activeWordPopup.canvasH,
             page: currentPage
         };
 
@@ -230,7 +315,6 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
 
         const { x, y, width, height } = currentDrawBox;
 
-        // Minimum drag threshold
         if (width >= 8 && height >= 8) {
             const { pdfX, pdfY, pdfWidth, pdfHeight } = canvasToPdfCoords(x, y, width, height);
             const editId = `edit_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
@@ -243,7 +327,6 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                     type: 'whiteout',
                     color: '#ffffff',
                     pdfX, pdfY, pdfWidth, pdfHeight,
-                    canvasX: x, canvasY: y, canvasWidth: width, canvasHeight: height,
                     page: currentPage
                 };
             } else if (activeTool === 'redact') {
@@ -252,7 +335,6 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                     type: 'redact',
                     color: '#000000',
                     pdfX, pdfY, pdfWidth, pdfHeight,
-                    canvasX: x, canvasY: y, canvasWidth: width, canvasHeight: height,
                     page: currentPage
                 };
             } else if (activeTool === 'text') {
@@ -267,7 +349,6 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                         textColor: '#000000',
                         bgFill: 'transparent',
                         pdfX, pdfY, pdfWidth, pdfHeight,
-                        canvasX: x, canvasY: y, canvasWidth: width, canvasHeight: height,
                         page: currentPage
                     };
                 }
@@ -321,7 +402,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                 return;
             }
 
-            const updatedBytes = await applyVisualEditsToPDF(pdfBufferRef.current, pageEdits);
+            const updatedBytes = await applyVisualEditsToPDF(originalPdfBytesRef.current, pageEdits);
             const updatedFile = new File([updatedBytes], file.name, { type: 'application/pdf' });
             
             onSave(updatedFile, totalEditsCount);
@@ -334,9 +415,9 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
         }
     };
 
-    const currentTextItems = pdfTextData?.pages?.[currentPage]?.items || [];
     const currentEdits = pageEdits[currentPage] || [];
     const totalEditsCount = Object.values(pageEdits).reduce((sum, arr) => sum + (arr ? arr.length : 0), 0);
+    const viewport = currentViewportRef.current;
 
     return (
         <div className="visual-editor-overlay animate-fade-in">
@@ -359,7 +440,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                     <div className="page-nav-pill">
                         <button 
                             className="btn-icon" 
-                            disabled={currentPage <= 1}
+                            disabled={currentPage <= 1 || rendering}
                             onClick={() => { setCurrentPage(prev => Math.max(1, prev - 1)); setActiveWordPopup(null); }}
                             title="Previous Page"
                         >
@@ -370,7 +451,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                         </span>
                         <button 
                             className="btn-icon" 
-                            disabled={currentPage >= numPages}
+                            disabled={currentPage >= numPages || rendering}
                             onClick={() => { setCurrentPage(prev => Math.min(numPages, prev + 1)); setActiveWordPopup(null); }}
                             title="Next Page"
                         >
@@ -381,8 +462,8 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                     <div className="zoom-pill">
                         <button 
                             className="btn-icon" 
-                            disabled={scale <= 0.8} 
-                            onClick={() => setScale(prev => Math.max(0.8, prev - 0.2))}
+                            disabled={scale <= 0.8 || rendering} 
+                            onClick={() => setScale(prev => Math.max(0.8, Number((prev - 0.2).toFixed(1))))}
                             title="Zoom Out"
                         >
                             <ZoomOut size={16} />
@@ -390,8 +471,8 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                         <span className="zoom-indicator">{Math.round(scale * 100)}%</span>
                         <button 
                             className="btn-icon" 
-                            disabled={scale >= 2.4} 
-                            onClick={() => setScale(prev => Math.min(2.4, prev + 0.2))}
+                            disabled={scale >= 2.4 || rendering} 
+                            onClick={() => setScale(prev => Math.min(2.4, Number((prev + 0.2).toFixed(1))))}
                             title="Zoom In"
                         >
                             <ZoomIn size={16} />
@@ -512,11 +593,11 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                 {loading ? (
                     <div className="flex-center flex-col gap-md" style={{ padding: '4rem', opacity: 0.7 }}>
                         <RefreshCw size={36} className="animate-spin" color="var(--accent-color)" />
-                        <p>Loading high-resolution document pages…</p>
+                        <p>Loading document in High Resolution…</p>
                     </div>
                 ) : (
                     <div className="canvas-wrapper">
-                        {/* PDF Page Canvas */}
+                        {/* High-DPI PDF Page Canvas */}
                         <canvas ref={canvasRef} className="pdf-render-canvas" />
 
                         {/* Interactive Vector / Text Hit Overlay */}
@@ -524,42 +605,37 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                             ref={overlayRef}
                             className={`canvas-interactive-overlay tool-${activeTool}`}
                             style={{
-                                width: viewportInfo?.width || '100%',
-                                height: viewportInfo?.height || '100%'
+                                width: `${pageDimensions.width}px`,
+                                height: `${pageDimensions.height}px`
                             }}
                             onMouseDown={handleOverlayMouseDown}
                             onMouseMove={handleOverlayMouseMove}
                             onMouseUp={handleOverlayMouseUp}
                         >
                             {/* 1. Detected Word Hit Boxes (Select Mode) */}
-                            {activeTool === 'select' && currentTextItems.map((item, idx) => {
-                                const boxX = item.canvasX * scale;
-                                const boxY = item.canvasY * scale;
-                                const boxW = Math.max(8, item.canvasWidth * scale);
-                                const boxH = Math.max(10, item.canvasHeight * scale);
-
-                                return (
-                                    <div
-                                        key={`word-${idx}`}
-                                        className="word-hit-box"
-                                        style={{
-                                            left: `${boxX}px`,
-                                            top: `${boxY}px`,
-                                            width: `${boxW}px`,
-                                            height: `${boxH}px`
-                                        }}
-                                        onClick={(e) => handleWordClick(item, e)}
-                                        title={`Click to edit: "${item.str}"`}
-                                    />
-                                );
-                            })}
+                            {activeTool === 'select' && pageTextItems.map((item, idx) => (
+                                <div
+                                    key={`word-${idx}`}
+                                    className="word-hit-box"
+                                    style={{
+                                        left: `${item.boxX}px`,
+                                        top: `${item.boxY}px`,
+                                        width: `${item.boxW}px`,
+                                        height: `${item.boxH}px`
+                                    }}
+                                    onClick={(e) => handleWordClick(item, e)}
+                                    title={`Click to edit: "${item.str}"`}
+                                />
+                            ))}
 
                             {/* 2. Rendered Active Edits for Current Page */}
-                            {currentEdits.map((edit) => {
-                                const boxX = edit.pdfX * scale;
-                                const boxY = (viewportInfo?.viewport?.height || 0) - (edit.pdfY * scale) - (edit.pdfHeight * scale);
-                                const boxW = edit.pdfWidth * scale;
-                                const boxH = edit.pdfHeight * scale;
+                            {viewport && currentEdits.map((edit) => {
+                                const [x1, y1] = viewport.convertToViewportPoint(edit.pdfX, edit.pdfY + edit.pdfHeight);
+                                const [x2, y2] = viewport.convertToViewportPoint(edit.pdfX + edit.pdfWidth, edit.pdfY);
+                                const boxX = Math.min(x1, x2);
+                                const boxY = Math.min(y1, y2);
+                                const boxW = Math.max(10, Math.abs(x2 - x1));
+                                const boxH = Math.max(10, Math.abs(y2 - y1));
 
                                 if (edit.type === 'whiteout') {
                                     return (
@@ -621,7 +697,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                                 minHeight: `${boxH + 4}px`,
                                                 backgroundColor: edit.bgFill !== 'transparent' ? (edit.bgFill || '#ffffff') : 'transparent',
                                                 color: edit.textColor || '#000000',
-                                                fontSize: `${(edit.fontSize || 11) * (scale / 1.0)}px`,
+                                                fontSize: `${(edit.fontSize || 11) * scale}px`,
                                                 fontFamily: edit.fontFamily === 'Courier' ? 'monospace' : edit.fontFamily === 'TimesRoman' ? 'serif' : 'sans-serif',
                                                 fontWeight: edit.fontFamily?.includes('Bold') ? 700 : 400
                                             }}
@@ -659,13 +735,13 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                 <div 
                                     className="word-edit-popover animate-scale-up"
                                     style={{
-                                        left: `${Math.min((viewportInfo?.width || 600) - 280, Math.max(10, activeWordPopup.canvasX))}px`,
-                                        top: `${Math.max(10, activeWordPopup.canvasY - 140)}px`
+                                        left: `${Math.min(pageDimensions.width - 280, Math.max(10, activeWordPopup.canvasX))}px`,
+                                        top: `${Math.max(10, activeWordPopup.canvasY - 145)}px`
                                     }}
                                     onClick={(e) => e.stopPropagation()}
                                 >
                                     <div className="popover-header">
-                                        <span className="popover-badge">Edit Text</span>
+                                        <span className="popover-badge">Edit Word</span>
                                         <button className="btn-icon" onClick={() => setActiveWordPopup(null)}>
                                             <X size={14} />
                                         </button>
