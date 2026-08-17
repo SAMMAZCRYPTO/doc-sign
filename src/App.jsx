@@ -101,21 +101,38 @@ function App() {
   const handleSaveVisualEdits = async (updatedFile, editsCount) => {
     if (!editingDocument) return;
     const idx = editingDocument.index;
+    const oldFile = editingDocument.file;
+
     setPdfFiles(prev => {
       const next = [...prev];
       next[idx] = updatedFile;
       return next;
     });
 
+    // Make the edited document immediately ready for download in DocumentList
     try {
       const buffer = await updatedFile.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      setProcessedFiles(prev => {
+        const filtered = prev.filter(p => p.originalFile !== oldFile && p.originalFile !== updatedFile);
+        return [
+          ...filtered,
+          {
+            originalFile: updatedFile,
+            status: 'success',
+            bytes: bytes,
+            signedName: updatedFile.name.replace(/\.pdf$/i, '') + '_Edited.pdf'
+          }
+        ];
+      });
+
       const comments = await extractCommentsFromPDF(buffer);
       setDetectedComments(prev => ({
         ...prev,
         [updatedFile.name]: comments
       }));
     } catch (e) {
-      console.error('Error re-scanning comments:', e);
+      console.error('Error post-processing visual edits:', e);
     }
     setEditingDocument(null);
   };
@@ -155,7 +172,17 @@ function App() {
     if (results.length === 0) return;
 
     // Append converted/original files
-    setPdfFiles(prev => [...prev, ...results]);
+    setPdfFiles(prev => {
+      const next = [...prev, ...results];
+      // Automatically open visual editor if uploaded from the edit tab or if opening is requested
+      if (activeTab === 'edit' && results.length > 0) {
+        const newIndex = prev.length;
+        setTimeout(() => {
+          setEditingDocument({ file: results[0], index: newIndex });
+        }, 150);
+      }
+      return next;
+    });
 
     // Scan for comments
     for (const file of results) {

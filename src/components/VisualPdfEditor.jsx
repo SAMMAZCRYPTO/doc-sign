@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
     X, Type, Eraser, Square, MousePointer, Plus, Trash2, 
     Undo2, Redo2, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, 
-    Check, Sparkles, RefreshCw, AlertCircle, Eye, Sliders, Search
+    Check, Download, RefreshCw, Eye
 } from 'lucide-react';
+import { saveAs } from 'file-saver';
 import { pdfjsLib } from '../utils/pdfWorkerInit';
 import { applyVisualEditsToPDF } from '../utils/pdfProcessor';
 
@@ -14,6 +15,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
     const [loading, setLoading] = useState(true);
     const [rendering, setRendering] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [downloading, setDownloading] = useState(false);
     const [activeTool, setActiveTool] = useState('select'); // 'select' | 'text' | 'whiteout' | 'redact'
     const [showHighlights, setShowHighlights] = useState(true);
     
@@ -22,18 +24,13 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
     const [history, setHistory] = useState([]);
     const [historyIndex, setHistoryIndex] = useState(-1);
 
-    // Text items for the active page
+    // Text items on active page
     const [pageTextItems, setPageTextItems] = useState([]);
     const [pageDimensions, setPageDimensions] = useState({ width: 595, height: 842 });
-    const [searchFilter, setSearchFilter] = useState('');
 
-    // Active popup for editing a selected word
-    const [activeWordPopup, setActiveWordPopup] = useState(null);
-    const [wordInputText, setWordInputText] = useState('');
-    const [wordFontFamily, setWordFontFamily] = useState('Helvetica');
-    const [wordFontSize, setWordFontSize] = useState(11);
-    const [wordTextColor, setWordTextColor] = useState('#000000');
-    const [wordBgFill, setWordBgFill] = useState('#ffffff');
+    // Active INLINE editing item (rendered directly on the canvas)
+    const [activeInlineEdit, setActiveInlineEdit] = useState(null);
+    // { editId, isNew, originalText, text, fontSize, fontFamily, textColor, bgFill, pdfX, pdfY, pdfWidth, pdfHeight, boxX, boxY, boxW, boxH }
 
     // Drawing state for drag-to-create rectangles
     const [isDrawing, setIsDrawing] = useState(false);
@@ -48,6 +45,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
     const currentViewportRef = useRef(null);
     const isRenderingRef = useRef(false);
     const pendingRenderRef = useRef(false);
+    const inlineInputRef = useRef(null);
 
     // 1. Load PDF Document once on mount
     useEffect(() => {
@@ -87,12 +85,11 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
         };
     }, [file, onClose]);
 
-    // 2. Safe, queue-based page rendering
+    // 2. Safe page rendering
     const renderPage = useCallback(async () => {
         if (!pdfDocRef.current || !canvasRef.current) return;
 
         if (isRenderingRef.current) {
-            // Cancel current task and flag a pending render
             if (renderTaskRef.current) {
                 try { renderTaskRef.current.cancel(); } catch (_) {}
             }
@@ -134,7 +131,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
             await renderTask.promise;
             renderTaskRef.current = null;
 
-            // Extract text items for this page
+            // Extract text items
             const textContent = await page.getTextContent();
             const items = [];
 
@@ -147,7 +144,6 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                 const width = item.width || (fontSize * item.str.length * 0.5);
                 const height = fontSize;
 
-                // Viewport coordinates
                 const [x1, y1] = viewport.convertToViewportPoint(tx, ty + height);
                 const [x2, y2] = viewport.convertToViewportPoint(tx + width, ty);
 
@@ -189,6 +185,14 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
         }
     }, [loading, currentPage, scale, renderPage]);
 
+    // Auto-focus inline input when opened
+    useEffect(() => {
+        if (activeInlineEdit && inlineInputRef.current) {
+            inlineInputRef.current.focus();
+            inlineInputRef.current.select();
+        }
+    }, [activeInlineEdit]);
+
     // Push state to undo history
     const pushHistory = (newEdits) => {
         const nextHistory = history.slice(0, historyIndex + 1);
@@ -202,11 +206,11 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
         if (historyIndex > 0) {
             setHistoryIndex(historyIndex - 1);
             setPageEdits(history[historyIndex - 1]);
-            setActiveWordPopup(null);
+            setActiveInlineEdit(null);
         } else if (historyIndex === 0) {
             setHistoryIndex(-1);
             setPageEdits({});
-            setActiveWordPopup(null);
+            setActiveInlineEdit(null);
         }
     };
 
@@ -214,11 +218,10 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
         if (historyIndex < history.length - 1) {
             setHistoryIndex(historyIndex + 1);
             setPageEdits(history[historyIndex + 1]);
-            setActiveWordPopup(null);
+            setActiveInlineEdit(null);
         }
     };
 
-    // Calculate PDF point coordinates from canvas overlay pixels
     const canvasToPdfCoords = (cx, cy, cWidth, cHeight) => {
         const viewport = currentViewportRef.current;
         if (!viewport) return { pdfX: cx, pdfY: cy, pdfWidth: cWidth, pdfHeight: cHeight };
@@ -234,62 +237,82 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
         };
     };
 
-    // Click on a detected word in 'select' mode
+    // Click on a word -> turn directly into INLINE editable box
     const handleWordClick = (item, e) => {
         if (e) e.stopPropagation();
 
-        setActiveWordPopup({
-            item,
-            canvasX: item.boxX,
-            canvasY: item.boxY,
-            canvasW: item.boxW,
-            canvasH: item.boxH
-        });
+        // Commit any previous inline edit first
+        if (activeInlineEdit) {
+            commitInlineEdit();
+        }
 
-        setWordInputText(item.str);
-        setWordFontSize(Math.round(item.fontSize) || 11);
-        setWordFontFamily(item.fontName?.toLowerCase().includes('bold') ? 'HelveticaBold' : 'Helvetica');
-        setWordTextColor('#000000');
-        setWordBgFill('#ffffff');
-    };
+        // Check if there is already an applied edit at this word
+        const existingEdit = (pageEdits[currentPage] || []).find(ed => 
+            Math.abs(ed.pdfX - item.pdfX) < 3 && Math.abs(ed.pdfY - item.pdfY) < 3
+        );
 
-    // Apply the active word replacement
-    const handleApplyWordEdit = () => {
-        if (!activeWordPopup || !wordInputText.trim()) return;
-
-        const { item } = activeWordPopup;
-        const editId = `edit_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
-
-        const newEdit = {
-            id: editId,
-            type: 'replace_word',
+        setActiveInlineEdit({
+            editId: existingEdit ? existingEdit.id : `edit_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+            isNew: !existingEdit,
             originalText: item.str,
-            text: wordInputText,
-            fontSize: Number(wordFontSize),
-            fontFamily: wordFontFamily,
-            textColor: wordTextColor,
-            bgFill: wordBgFill,
+            text: existingEdit ? existingEdit.text : item.str,
+            fontSize: existingEdit ? existingEdit.fontSize : (Math.round(item.fontSize) || 11),
+            fontFamily: existingEdit ? existingEdit.fontFamily : (item.fontName?.toLowerCase().includes('bold') ? 'HelveticaBold' : 'Helvetica'),
+            textColor: existingEdit ? existingEdit.textColor : '#000000',
+            bgFill: '#ffffff',
             pdfX: item.pdfX,
             pdfY: item.pdfY,
             pdfWidth: item.width,
             pdfHeight: item.height,
-            page: currentPage
-        };
-
-        const currentList = pageEdits[currentPage] || [];
-        const nextEdits = {
-            ...pageEdits,
-            [currentPage]: [...currentList, newEdit]
-        };
-
-        pushHistory(nextEdits);
-        setActiveWordPopup(null);
+            boxX: item.boxX,
+            boxY: item.boxY,
+            boxW: item.boxW,
+            boxH: item.boxH
+        });
     };
 
-    // Canvas overlay mouse events for drawing tools
+    // Commit current inline edit
+    const commitInlineEdit = () => {
+        if (!activeInlineEdit) return;
+
+        const { editId, text, originalText, fontSize, fontFamily, textColor, bgFill, pdfX, pdfY, pdfWidth, pdfHeight } = activeInlineEdit;
+
+        // If text was changed or it's a new edit with text
+        if (text && text.trim()) {
+            const newEdit = {
+                id: editId,
+                type: 'replace_word',
+                originalText: originalText,
+                text: text,
+                fontSize: Number(fontSize) || 11,
+                fontFamily: fontFamily || 'Helvetica',
+                textColor: textColor || '#000000',
+                bgFill: bgFill || '#ffffff',
+                pdfX: pdfX,
+                pdfY: pdfY,
+                pdfWidth: pdfWidth,
+                pdfHeight: pdfHeight,
+                page: currentPage
+            };
+
+            const currentList = (pageEdits[currentPage] || []).filter(item => item.id !== editId);
+            const nextEdits = {
+                ...pageEdits,
+                [currentPage]: [...currentList, newEdit]
+            };
+
+            pushHistory(nextEdits);
+        }
+
+        setActiveInlineEdit(null);
+    };
+
+    // Click on canvas overlay
     const handleOverlayMouseDown = (e) => {
         if (activeTool === 'select') {
-            setActiveWordPopup(null);
+            if (activeInlineEdit) {
+                commitInlineEdit();
+            }
             return;
         }
 
@@ -330,48 +353,40 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
             const { pdfX, pdfY, pdfWidth, pdfHeight } = canvasToPdfCoords(x, y, width, height);
             const editId = `edit_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
 
-            let newEdit = null;
-
             if (activeTool === 'whiteout') {
-                newEdit = {
+                const newEdit = {
                     id: editId,
                     type: 'whiteout',
                     color: '#ffffff',
                     pdfX, pdfY, pdfWidth, pdfHeight,
                     page: currentPage
                 };
+                const currentList = pageEdits[currentPage] || [];
+                pushHistory({ ...pageEdits, [currentPage]: [...currentList, newEdit] });
             } else if (activeTool === 'redact') {
-                newEdit = {
+                const newEdit = {
                     id: editId,
                     type: 'redact',
                     color: '#000000',
                     pdfX, pdfY, pdfWidth, pdfHeight,
                     page: currentPage
                 };
-            } else if (activeTool === 'text') {
-                const userText = prompt('Enter text for this text box:', 'Sample Text');
-                if (userText && userText.trim()) {
-                    newEdit = {
-                        id: editId,
-                        type: 'text_box',
-                        text: userText,
-                        fontSize: 12,
-                        fontFamily: 'Helvetica',
-                        textColor: '#000000',
-                        bgFill: 'transparent',
-                        pdfX, pdfY, pdfWidth, pdfHeight,
-                        page: currentPage
-                    };
-                }
-            }
-
-            if (newEdit) {
                 const currentList = pageEdits[currentPage] || [];
-                const nextEdits = {
-                    ...pageEdits,
-                    [currentPage]: [...currentList, newEdit]
-                };
-                pushHistory(nextEdits);
+                pushHistory({ ...pageEdits, [currentPage]: [...currentList, newEdit] });
+            } else if (activeTool === 'text') {
+                // Drop inline editable text box directly on page
+                setActiveInlineEdit({
+                    editId: editId,
+                    isNew: true,
+                    originalText: '',
+                    text: 'Type text here',
+                    fontSize: 12,
+                    fontFamily: 'Helvetica',
+                    textColor: '#000000',
+                    bgFill: 'transparent',
+                    pdfX, pdfY, pdfWidth, pdfHeight,
+                    boxX: x, boxY: y, boxW: width, boxH: height
+                });
             }
         }
 
@@ -390,6 +405,9 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
             [currentPage]: nextList
         };
         pushHistory(nextEdits);
+        if (activeInlineEdit && activeInlineEdit.editId === editId) {
+            setActiveInlineEdit(null);
+        }
     };
 
     // Clear all edits on current page
@@ -399,20 +417,19 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
             const nextEdits = { ...pageEdits };
             delete nextEdits[currentPage];
             pushHistory(nextEdits);
-            setActiveWordPopup(null);
+            setActiveInlineEdit(null);
         }
     };
 
     // Save and compile all edits into a new PDF File
     const handleSaveDocument = async () => {
+        if (activeInlineEdit) {
+            commitInlineEdit();
+        }
+
         setSaving(true);
         try {
             const totalEditsCount = Object.values(pageEdits).reduce((sum, arr) => sum + (arr ? arr.length : 0), 0);
-            if (totalEditsCount === 0) {
-                onClose();
-                return;
-            }
-
             const updatedBytes = await applyVisualEditsToPDF(originalPdfBytesRef.current, pageEdits);
             const updatedFile = new File([updatedBytes], file.name, { type: 'application/pdf' });
             
@@ -426,13 +443,29 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
         }
     };
 
+    // Direct Download Button
+    const handleDirectDownload = async () => {
+        if (activeInlineEdit) {
+            commitInlineEdit();
+        }
+
+        setDownloading(true);
+        try {
+            const updatedBytes = await applyVisualEditsToPDF(originalPdfBytesRef.current, pageEdits);
+            const blob = new Blob([updatedBytes], { type: 'application/pdf' });
+            const outName = file.name.replace(/\.pdf$/i, '') + '_Edited.pdf';
+            saveAs(blob, outName);
+        } catch (err) {
+            console.error('Download error:', err);
+            alert('Could not generate PDF download: ' + err.message);
+        } finally {
+            setDownloading(false);
+        }
+    };
+
     const currentEdits = pageEdits[currentPage] || [];
     const totalEditsCount = Object.values(pageEdits).reduce((sum, arr) => sum + (arr ? arr.length : 0), 0);
     const viewport = currentViewportRef.current;
-
-    const filteredWords = searchFilter.trim() 
-        ? pageTextItems.filter(item => item.str.toLowerCase().includes(searchFilter.toLowerCase()))
-        : [];
 
     return (
         <div className="visual-editor-overlay animate-fade-in">
@@ -445,7 +478,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                     <div>
                         <h2 className="editor-title">{file.name}</h2>
                         <span className="editor-subtitle">
-                            Visual Word &amp; Text Studio • {totalEditsCount} edit{totalEditsCount === 1 ? '' : 's'} staged
+                            Direct In-Document Editor • {totalEditsCount} change{totalEditsCount === 1 ? '' : 's'} made
                         </span>
                     </div>
                 </div>
@@ -456,7 +489,10 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                         <button 
                             className="btn-icon" 
                             disabled={currentPage <= 1 || rendering}
-                            onClick={() => { setCurrentPage(prev => Math.max(1, prev - 1)); setActiveWordPopup(null); }}
+                            onClick={() => { 
+                                if (activeInlineEdit) commitInlineEdit();
+                                setCurrentPage(prev => Math.max(1, prev - 1)); 
+                            }}
                             title="Previous Page"
                         >
                             <ChevronLeft size={18} />
@@ -467,7 +503,10 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                         <button 
                             className="btn-icon" 
                             disabled={currentPage >= numPages || rendering}
-                            onClick={() => { setCurrentPage(prev => Math.min(numPages, prev + 1)); setActiveWordPopup(null); }}
+                            onClick={() => { 
+                                if (activeInlineEdit) commitInlineEdit();
+                                setCurrentPage(prev => Math.min(numPages, prev + 1)); 
+                            }}
                             title="Next Page"
                         >
                             <ChevronRight size={18} />
@@ -478,7 +517,10 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                         <button 
                             className="btn-icon" 
                             disabled={scale <= 0.8 || rendering} 
-                            onClick={() => setScale(prev => Math.max(0.8, Number((prev - 0.2).toFixed(1))))}
+                            onClick={() => {
+                                if (activeInlineEdit) commitInlineEdit();
+                                setScale(prev => Math.max(0.8, Number((prev - 0.2).toFixed(1))));
+                            }}
                             title="Zoom Out"
                         >
                             <ZoomOut size={16} />
@@ -487,7 +529,10 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                         <button 
                             className="btn-icon" 
                             disabled={scale >= 2.4 || rendering} 
-                            onClick={() => setScale(prev => Math.min(2.4, Number((prev + 0.2).toFixed(1))))}
+                            onClick={() => {
+                                if (activeInlineEdit) commitInlineEdit();
+                                setScale(prev => Math.min(2.4, Number((prev + 0.2).toFixed(1))));
+                            }}
                             title="Zoom In"
                         >
                             <ZoomIn size={16} />
@@ -515,17 +560,28 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                     </button>
 
                     <button 
-                        className="btn btn-primary" 
+                        className="btn btn-secondary flex-center gap-xs" 
+                        onClick={handleDirectDownload}
+                        disabled={downloading || loading}
+                        style={{ padding: '0.45rem 0.9rem', fontSize: '0.85rem' }}
+                        title="Download modified PDF directly to your computer"
+                    >
+                        {downloading ? <RefreshCw size={15} className="animate-spin" /> : <Download size={15} />}
+                        <span>Download PDF</span>
+                    </button>
+
+                    <button 
+                        className="btn btn-primary flex-center gap-xs" 
                         onClick={handleSaveDocument}
                         disabled={saving || loading}
-                        style={{ padding: '0.5rem 1.25rem', fontSize: '0.875rem' }}
+                        style={{ padding: '0.45rem 1.1rem', fontSize: '0.85rem' }}
                     >
                         {saving ? (
                             <span className="animate-pulse">Applying...</span>
                         ) : (
                             <>
                                 <Check size={16} />
-                                Save &amp; Apply Edits ({totalEditsCount})
+                                <span>Save &amp; Close</span>
                             </>
                         )}
                     </button>
@@ -541,17 +597,17 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                 <div className="tools-group">
                     <button 
                         className={`tool-btn ${activeTool === 'select' ? 'active' : ''}`}
-                        onClick={() => { setActiveTool('select'); setActiveWordPopup(null); }}
-                        title="Click on any word in the PDF to edit or replace it"
+                        onClick={() => { setActiveTool('select'); if (activeInlineEdit) commitInlineEdit(); }}
+                        title="Click on any word on the document to edit it directly in place"
                     >
                         <MousePointer size={16} />
-                        <span>Select &amp; Edit Words</span>
+                        <span>Click to Edit Word</span>
                     </button>
 
                     <button 
                         className={`tool-btn ${activeTool === 'text' ? 'active' : ''}`}
-                        onClick={() => { setActiveTool('text'); setActiveWordPopup(null); }}
-                        title="Drag a box anywhere to add a new custom text overlay"
+                        onClick={() => { setActiveTool('text'); if (activeInlineEdit) commitInlineEdit(); }}
+                        title="Drag a box to place a new text box"
                     >
                         <Type size={16} />
                         <span>Add Text Box</span>
@@ -559,8 +615,8 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
 
                     <button 
                         className={`tool-btn ${activeTool === 'whiteout' ? 'active' : ''}`}
-                        onClick={() => { setActiveTool('whiteout'); setActiveWordPopup(null); }}
-                        title="Drag a box to cleanly whiteout / erase existing text or graphics"
+                        onClick={() => { setActiveTool('whiteout'); if (activeInlineEdit) commitInlineEdit(); }}
+                        title="Drag a box to cleanly whiteout / erase existing text"
                     >
                         <Eraser size={16} />
                         <span>Whiteout Mask</span>
@@ -568,7 +624,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
 
                     <button 
                         className={`tool-btn ${activeTool === 'redact' ? 'active' : ''}`}
-                        onClick={() => { setActiveTool('redact'); setActiveWordPopup(null); }}
+                        onClick={() => { setActiveTool('redact'); if (activeInlineEdit) commitInlineEdit(); }}
                         title="Drag a box to blackout sensitive confidential data"
                     >
                         <Square size={16} />
@@ -587,16 +643,16 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
 
                 <div className="toolbar-hint">
                     {activeTool === 'select' && (
-                        <span>💡 <strong>Click any word</strong> on the page below to open the replacement popup.</span>
+                        <span>✨ <strong>Click directly on any word</strong> on the document below to type replacement text.</span>
                     )}
                     {activeTool === 'text' && (
-                        <span>💡 <strong>Click and drag a rectangle</strong> on the page to place a new text box.</span>
+                        <span>✨ <strong>Drag a rectangle</strong> on the document to place a new text box.</span>
                     )}
                     {activeTool === 'whiteout' && (
-                        <span>💡 <strong>Click and drag a rectangle</strong> to whiteout unwanted text.</span>
+                        <span>✨ <strong>Drag a rectangle</strong> to whiteout / erase unwanted content.</span>
                     )}
                     {activeTool === 'redact' && (
-                        <span>💡 <strong>Click and drag a rectangle</strong> to blackout private information.</span>
+                        <span>✨ <strong>Drag a rectangle</strong> to blackout private information.</span>
                     )}
                 </div>
 
@@ -636,7 +692,7 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                             onMouseMove={handleOverlayMouseMove}
                             onMouseUp={handleOverlayMouseUp}
                         >
-                            {/* 1. Detected Word Hit Boxes (Select Mode) */}
+                            {/* 1. Word Hit Targets (Select Mode) */}
                             {activeTool === 'select' && showHighlights && pageTextItems.map((item) => (
                                 <div
                                     key={item.id}
@@ -652,8 +708,11 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                 />
                             ))}
 
-                            {/* 2. Rendered Active Edits for Current Page */}
+                            {/* 2. Committed Active Edits on this page */}
                             {viewport && currentEdits.map((edit) => {
+                                // If currently being edited inline, hide the static box
+                                if (activeInlineEdit && activeInlineEdit.editId === edit.id) return null;
+
                                 const [x1, y1] = viewport.convertToViewportPoint(edit.pdfX, edit.pdfY + edit.pdfHeight);
                                 const [x2, y2] = viewport.convertToViewportPoint(edit.pdfX + edit.pdfWidth, edit.pdfY);
                                 const boxX = Math.min(x1, x2);
@@ -723,14 +782,28 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                                 color: edit.textColor || '#000000',
                                                 fontSize: `${(edit.fontSize || 11) * scale}px`,
                                                 fontFamily: edit.fontFamily === 'Courier' ? 'monospace' : edit.fontFamily === 'TimesRoman' ? 'serif' : 'sans-serif',
-                                                fontWeight: edit.fontFamily?.includes('Bold') ? 700 : 400
+                                                fontWeight: edit.fontFamily?.includes('Bold') ? 700 : 400,
+                                                cursor: 'pointer'
+                                            }}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleWordClick({
+                                                    str: edit.text,
+                                                    pdfX: edit.pdfX,
+                                                    pdfY: edit.pdfY,
+                                                    width: edit.pdfWidth,
+                                                    height: edit.pdfHeight,
+                                                    fontSize: edit.fontSize,
+                                                    fontName: edit.fontFamily,
+                                                    boxX, boxY, boxW, boxH
+                                                }, e);
                                             }}
                                         >
                                             <span>{edit.text}</span>
                                             <button 
                                                 className="remove-patch-btn" 
                                                 onClick={(e) => handleRemoveEdit(edit.id, e)}
-                                                title="Remove text edit"
+                                                title="Remove edit"
                                             >
                                                 <X size={12} />
                                             </button>
@@ -754,89 +827,92 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                 />
                             )}
 
-                            {/* 4. Floating Word Edit Popover Modal */}
-                            {activeWordPopup && (
+                            {/* 4. TRUE IN-PLACE INLINE EDITING ELEMENT (DIRECT ON DOCUMENT) */}
+                            {activeInlineEdit && (
                                 <div 
-                                    className="word-edit-popover animate-scale-up"
+                                    className="inline-edit-wrapper animate-scale-up"
                                     style={{
-                                        left: `${Math.min(pageDimensions.width - 280, Math.max(10, activeWordPopup.canvasX))}px`,
-                                        top: `${Math.max(10, activeWordPopup.canvasY - 145)}px`
+                                        left: `${activeInlineEdit.boxX - 4}px`,
+                                        top: `${activeInlineEdit.boxY - 4}px`,
+                                        zIndex: 200
                                     }}
                                     onClick={(e) => e.stopPropagation()}
                                 >
-                                    <div className="popover-header">
-                                        <span className="popover-badge">Edit Word</span>
-                                        <button className="btn-icon" onClick={() => setActiveWordPopup(null)}>
-                                            <X size={14} />
-                                        </button>
-                                    </div>
-
-                                    <div className="popover-body">
-                                        <div className="original-label">
-                                            Original: <em>"{activeWordPopup.item.str}"</em>
-                                        </div>
+                                    {/* Mini Attached Floating Format Toolbar */}
+                                    <div className="inline-micro-toolbar">
+                                        <select
+                                            className="micro-select"
+                                            value={activeInlineEdit.fontFamily}
+                                            onChange={(e) => setActiveInlineEdit(prev => ({ ...prev, fontFamily: e.target.value }))}
+                                        >
+                                            <option value="Helvetica">Helvetica</option>
+                                            <option value="HelveticaBold">Helvetica Bold</option>
+                                            <option value="TimesRoman">Times Roman</option>
+                                            <option value="Courier">Courier</option>
+                                        </select>
 
                                         <input
-                                            type="text"
-                                            className="popover-input"
-                                            value={wordInputText}
-                                            onChange={(e) => setWordInputText(e.target.value)}
-                                            placeholder="Replacement text…"
-                                            autoFocus
-                                            onKeyDown={(e) => { if (e.key === 'Enter') handleApplyWordEdit(); }}
+                                            type="number"
+                                            className="micro-number"
+                                            min="6"
+                                            max="72"
+                                            value={activeInlineEdit.fontSize}
+                                            onChange={(e) => setActiveInlineEdit(prev => ({ ...prev, fontSize: Number(e.target.value) }))}
+                                            title="Font Size"
                                         />
 
-                                        <div className="popover-row">
-                                            <select 
-                                                className="popover-select"
-                                                value={wordFontFamily}
-                                                onChange={(e) => setWordFontFamily(e.target.value)}
-                                            >
-                                                <option value="Helvetica">Helvetica</option>
-                                                <option value="HelveticaBold">Helvetica Bold</option>
-                                                <option value="TimesRoman">Times Roman</option>
-                                                <option value="Courier">Courier</option>
-                                            </select>
+                                        <input
+                                            type="color"
+                                            className="micro-color"
+                                            value={activeInlineEdit.textColor}
+                                            onChange={(e) => setActiveInlineEdit(prev => ({ ...prev, textColor: e.target.value }))}
+                                            title="Text Color"
+                                        />
 
-                                            <input 
-                                                type="number"
-                                                className="popover-num-input"
-                                                min="6"
-                                                max="72"
-                                                value={wordFontSize}
-                                                onChange={(e) => setWordFontSize(e.target.value)}
-                                                title="Font size in points"
-                                            />
-
-                                            <input 
-                                                type="color"
-                                                className="popover-color-picker"
-                                                value={wordTextColor}
-                                                onChange={(e) => setWordTextColor(e.target.value)}
-                                                title="Text Color"
-                                            />
-                                        </div>
-
-                                        <div className="popover-row" style={{ marginTop: '0.4rem' }}>
-                                            <label style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer' }}>
-                                                <input 
-                                                    type="checkbox"
-                                                    checked={wordBgFill === '#ffffff'}
-                                                    onChange={(e) => setWordBgFill(e.target.checked ? '#ffffff' : 'transparent')}
-                                                />
-                                                Whiteout original background
-                                            </label>
-                                        </div>
-                                    </div>
-
-                                    <div className="popover-footer">
-                                        <button className="btn btn-secondary" onClick={() => setActiveWordPopup(null)} style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}>
-                                            Cancel
+                                        <button 
+                                            className="micro-btn commit-btn"
+                                            onClick={commitInlineEdit}
+                                            title="Commit Change (Enter)"
+                                        >
+                                            <Check size={13} />
                                         </button>
-                                        <button className="btn btn-primary" onClick={handleApplyWordEdit} style={{ padding: '0.3rem 0.8rem', fontSize: '0.75rem' }}>
-                                            Apply Edit
+
+                                        <button 
+                                            className="micro-btn delete-btn"
+                                            onClick={() => {
+                                                handleRemoveEdit(activeInlineEdit.editId);
+                                                setActiveInlineEdit(null);
+                                            }}
+                                            title="Discard"
+                                        >
+                                            <Trash2 size={13} />
                                         </button>
                                     </div>
+
+                                    {/* Direct In-Place Input Box */}
+                                    <input
+                                        ref={inlineInputRef}
+                                        type="text"
+                                        className="direct-inline-input"
+                                        value={activeInlineEdit.text}
+                                        onChange={(e) => setActiveInlineEdit(prev => ({ ...prev, text: e.target.value }))}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.preventDefault();
+                                                commitInlineEdit();
+                                            } else if (e.key === 'Escape') {
+                                                setActiveInlineEdit(null);
+                                            }
+                                        }}
+                                        style={{
+                                            fontSize: `${(activeInlineEdit.fontSize || 11) * scale}px`,
+                                            fontFamily: activeInlineEdit.fontFamily === 'Courier' ? 'monospace' : activeInlineEdit.fontFamily === 'TimesRoman' ? 'serif' : 'sans-serif',
+                                            fontWeight: activeInlineEdit.fontFamily?.includes('Bold') ? 700 : 400,
+                                            color: activeInlineEdit.textColor,
+                                            minWidth: `${Math.max(activeInlineEdit.boxW + 12, 60)}px`,
+                                            height: `${Math.max(activeInlineEdit.boxH + 8, 24)}px`
+                                        }}
+                                    />
                                 </div>
                             )}
                         </div>

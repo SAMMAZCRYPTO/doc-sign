@@ -384,18 +384,52 @@ export default function FileUpload({
                         <Type />
                         Edit Words &amp; Text
                     </h2>
+                </div>
 
-                    {pdfFiles.length > 0 && onOpenVisualEditor && (
-                        <button
-                            type="button"
-                            className="btn btn-secondary flex-center gap-xs"
-                            onClick={() => onOpenVisualEditor(pdfFiles[0])}
-                            style={{ padding: '0.45rem 0.85rem', fontSize: '0.8rem', background: 'rgba(59, 130, 246, 0.15)', color: 'var(--accent-color)', borderColor: 'rgba(59, 130, 246, 0.3)' }}
-                        >
-                            <Edit3 size={14} />
-                            Launch Visual Editor
-                        </button>
-                    )}
+                {/* Direct Visual Studio Quick Launch Banner */}
+                <div style={{ 
+                    padding: '1.1rem', 
+                    borderRadius: 'var(--border-radius-md)', 
+                    background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.18) 0%, rgba(139, 92, 246, 0.15) 100%)', 
+                    border: '1px solid rgba(59, 130, 246, 0.35)', 
+                    marginBottom: '1.25rem',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.75rem'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                        <div>
+                            <div style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                <Edit3 size={16} color="var(--accent-color)" />
+                                Direct Visual PDF Studio
+                            </div>
+                            <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
+                                Click directly on any word on your document page to replace it instantly in place.
+                            </div>
+                        </div>
+
+                        {pdfFiles.length > 0 && onOpenVisualEditor ? (
+                            <button
+                                type="button"
+                                className="btn btn-primary flex-center gap-xs"
+                                onClick={() => onOpenVisualEditor(pdfFiles[0])}
+                                style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}
+                            >
+                                <Edit3 size={15} />
+                                Open Visual Studio ({pdfFiles[0].name.length > 18 ? pdfFiles[0].name.substring(0, 15) + '…' : pdfFiles[0].name})
+                            </button>
+                        ) : (
+                            <button
+                                type="button"
+                                className="btn btn-primary flex-center gap-xs"
+                                onClick={() => document.getElementById('pdf-upload')?.click()}
+                                style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}
+                            >
+                                <Upload size={15} />
+                                Upload &amp; Open in Editor
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 {/* Master Toggle */}

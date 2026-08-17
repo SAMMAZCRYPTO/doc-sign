@@ -1330,7 +1330,7 @@ export async function findAndReplaceTextInPDF(pdfBuffer, rules = []) {
  * @returns {Promise<Uint8Array>} - Modified PDF bytes
  */
 export async function applyVisualEditsToPDF(pdfBuffer, pageEdits = {}) {
-    const rawBytes = pdfBuffer instanceof Uint8Array ? pdfBuffer : new Uint8Array(pdfBuffer);
+    const rawBytes = pdfBuffer instanceof Uint8Array ? pdfBuffer.slice() : new Uint8Array(pdfBuffer).slice();
     const pdfDoc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
     const pages = pdfDoc.getPages();
 
@@ -1342,6 +1342,7 @@ export async function applyVisualEditsToPDF(pdfBuffer, pageEdits = {}) {
         return fontCache[fontName];
     };
 
+
     for (const [pageNumStr, edits] of Object.entries(pageEdits)) {
         const pageNum = parseInt(pageNumStr, 10);
         const pageIndex = pageNum - 1;
@@ -1350,23 +1351,35 @@ export async function applyVisualEditsToPDF(pdfBuffer, pageEdits = {}) {
 
         for (const edit of edits) {
             if (edit.type === 'replace_word' || edit.type === 'text_box') {
+                const font = await getFont(edit.fontFamily || 'Helvetica');
+                const color = hexToRgb(edit.textColor || '#000000') || rgb(0, 0, 0);
+                const size = edit.fontSize || 12;
+                const sanitizedText = sanitizeTextForWinAnsi(edit.text || '');
+
+                let textWidth = edit.pdfWidth || 0;
+                if (sanitizedText) {
+                    try {
+                        textWidth = Math.max(textWidth, font.widthOfTextAtSize(sanitizedText, size));
+                    } catch (_) {}
+                }
+
                 // Background mask
                 if (edit.bgFill && edit.bgFill !== 'transparent' && edit.bgFill !== 'none') {
                     const bgColor = hexToRgb(edit.bgFill) || rgb(1, 1, 1);
+                    const maskW = Math.max(edit.pdfWidth || 0, textWidth) + 3;
+                    const maskH = Math.max(edit.pdfHeight || 0, size) + 4;
                     page.drawRectangle({
                         x: edit.pdfX - 1,
                         y: edit.pdfY - 2,
-                        width: edit.pdfWidth + 2,
-                        height: edit.pdfHeight + 4,
+                        width: maskW,
+                        height: maskH,
                         color: bgColor
                     });
                 }
+
                 // Text overlay
-                if (edit.text) {
-                    const font = await getFont(edit.fontFamily || 'Helvetica');
-                    const color = hexToRgb(edit.textColor) || rgb(0, 0, 0);
-                    const size = edit.fontSize || 12;
-                    page.drawText(sanitizeTextForWinAnsi(edit.text), {
+                if (sanitizedText) {
+                    page.drawText(sanitizedText, {
                         x: edit.pdfX,
                         y: edit.pdfY,
                         size: size,
