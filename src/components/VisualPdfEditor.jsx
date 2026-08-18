@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
     X, Type, Eraser, Square, MousePointer, Plus, Minus, Trash2, 
     Undo2, Redo2, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, 
@@ -189,21 +189,14 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
         }
     }, [loading, currentPage, scale, renderPage]);
 
-    // When a new edit is opened: set the contentEditable text and select all — runs BEFORE paint
-    useLayoutEffect(() => {
-        if (!activeInlineEdit || !inlineInputRef.current) return;
-        const el = inlineInputRef.current;
-        // Set text content directly (avoids React controlled/contentEditable conflict)
-        el.textContent = activeInlineEdit.text;
-        el.focus();
-        try {
-            const range = document.createRange();
-            range.selectNodeContents(el);
-            const sel = window.getSelection();
-            sel.removeAllRanges();
-            sel.addRange(range);
-        } catch (_) {}
-    // Only fire when a new edit is opened (editId changes), not on every text update
+    // When a new inline edit opens: focus the textarea and select all text
+    useEffect(() => {
+        if (activeInlineEdit && inlineInputRef.current) {
+            const el = inlineInputRef.current;
+            el.focus();
+            el.select();
+        }
+    // Only run when a new edit is opened
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeInlineEdit?.editId]);
 
@@ -289,12 +282,11 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
         });
     };
 
-    // Commit current inline edit — reads the LIVE text from the contentEditable DOM node
+    // Commit current inline edit — reads text directly from React state (textarea is controlled)
     const commitInlineEdit = () => {
         if (!activeInlineEdit) return;
 
-        // Read the actual current text from the DOM (avoids stale state issue with contentEditable)
-        const liveText = inlineInputRef.current?.textContent ?? activeInlineEdit.text;
+        const liveText = activeInlineEdit.text;
         const { editId, originalText, fontSize, fontFamily, fontName, textColor, bgFill, pdfX, pdfY, pdfWidth, pdfHeight } = activeInlineEdit;
 
         if (liveText && liveText.trim()) {
@@ -874,7 +866,25 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                             )}
 
                             {/* 4. ACROBAT-STYLE IN-PLACE TEXT EDITOR */}
-                            {activeInlineEdit && (
+                            {activeInlineEdit && (() => {
+                                // Shared font style for both the mirror div and textarea
+                                const fieldStyle = {
+                                    fontSize: `${(activeInlineEdit.fontSize || 11) * scale}px`,
+                                    fontFamily: getCssFontFamily(activeInlineEdit.fontFamily),
+                                    fontWeight: getCssFontWeight(activeInlineEdit.fontFamily),
+                                    fontStyle: getCssFontStyle(activeInlineEdit.fontFamily),
+                                    color: activeInlineEdit.textColor,
+                                    minWidth: `${Math.max(activeInlineEdit.boxW, 40)}px`,
+                                    lineHeight: 1.3,
+                                    whiteSpace: 'pre',         // single-line, grows right
+                                    wordBreak: 'keep-all',
+                                    padding: '2px 4px',
+                                    border: '2px solid #2684ff',
+                                    borderRadius: '2px',
+                                    boxSizing: 'border-box',
+                                    letterSpacing: 'normal',
+                                };
+                                return (
                                 <div
                                     className="acrobat-edit-wrapper"
                                     style={{
@@ -886,7 +896,6 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                 >
                                     {/* Acrobat-style Properties Bar */}
                                     <div className="acrobat-props-bar" onMouseDown={(e) => e.stopPropagation()}>
-                                        {/* Font family */}
                                         <select
                                             className="acrobat-font-select"
                                             value={activeInlineEdit.fontFamily}
@@ -913,7 +922,6 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
 
                                         <div className="acrobat-bar-divider" />
 
-                                        {/* Font size */}
                                         <button
                                             className="acrobat-bar-btn"
                                             onMouseDown={(e) => e.preventDefault()}
@@ -944,14 +952,13 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
 
                                         <div className="acrobat-bar-divider" />
 
-                                        {/* Bold toggle */}
                                         <button
                                             className={`acrobat-bar-btn acrobat-style-btn ${getCssFontWeight(activeInlineEdit.fontFamily) === 700 ? 'active' : ''}`}
                                             onMouseDown={(e) => e.preventDefault()}
                                             onClick={() => {
                                                 const isBold = getCssFontWeight(activeInlineEdit.fontFamily) === 700;
                                                 const isItalic = getCssFontStyle(activeInlineEdit.fontFamily) === 'italic';
-                                                const base = activeInlineEdit.fontFamily.replace(/Bold|Oblique|Italic/g, '').replace(/BoldOblique|BoldItalic/g, '').trimEnd();
+                                                const base = activeInlineEdit.fontFamily.replace(/BoldOblique|BoldItalic|Bold|Oblique|Italic/g, '').trimEnd();
                                                 let next = base;
                                                 if (!isBold && isItalic) next = base + 'BoldOblique';
                                                 else if (!isBold) next = base + 'Bold';
@@ -963,7 +970,6 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                             <strong style={{ fontSize: '13px', lineHeight: 1 }}>B</strong>
                                         </button>
 
-                                        {/* Italic toggle */}
                                         <button
                                             className={`acrobat-bar-btn acrobat-style-btn ${getCssFontStyle(activeInlineEdit.fontFamily) === 'italic' ? 'active' : ''}`}
                                             onMouseDown={(e) => e.preventDefault()}
@@ -984,7 +990,6 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
 
                                         <div className="acrobat-bar-divider" />
 
-                                        {/* Text colour */}
                                         <label className="acrobat-color-btn" title="Text Color">
                                             <span style={{
                                                 display: 'inline-block', width: 14, height: 14,
@@ -1002,7 +1007,6 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
 
                                         <div className="acrobat-bar-divider" />
 
-                                        {/* Commit */}
                                         <button
                                             className="acrobat-bar-btn acrobat-commit-btn"
                                             onMouseDown={(e) => e.preventDefault()}
@@ -1012,7 +1016,6 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                             <Check size={13} />
                                         </button>
 
-                                        {/* Cancel */}
                                         <button
                                             className="acrobat-bar-btn acrobat-cancel-btn"
                                             onMouseDown={(e) => e.preventDefault()}
@@ -1023,46 +1026,51 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                         </button>
                                     </div>
 
-                                    {/* contentEditable text area — auto-expands, matches PDF font */}
-                                    <div
-                                        key={activeInlineEdit.editId}
-                                        ref={inlineInputRef}
-                                        contentEditable
-                                        suppressContentEditableWarning
-                                        className="acrobat-text-field"
-                                        spellCheck={false}
-                                        onMouseDown={(e) => e.stopPropagation()}
-                                        onClick={(e) => e.stopPropagation()}
-                                        onInput={(e) => {
-                                            // Sync state for font/color toolbar only (text read from DOM on commit)
-                                            setActiveInlineEdit(prev => ({
-                                                ...prev,
-                                                text: e.currentTarget.textContent
-                                            }));
-                                        }}
-                                        onKeyDown={(e) => {
-                                            e.stopPropagation();
-                                            if (e.key === 'Enter') {
-                                                e.preventDefault();
-                                                commitInlineEdit();
-                                            } else if (e.key === 'Escape') {
-                                                e.preventDefault();
-                                                setActiveInlineEdit(null);
-                                            }
-                                        }}
-                                        style={{
-                                            fontSize: `${(activeInlineEdit.fontSize || 11) * scale}px`,
-                                            fontFamily: getCssFontFamily(activeInlineEdit.fontFamily),
-                                            fontWeight: getCssFontWeight(activeInlineEdit.fontFamily),
-                                            fontStyle: getCssFontStyle(activeInlineEdit.fontFamily),
-                                            color: activeInlineEdit.textColor,
-                                            minWidth: `${Math.max(activeInlineEdit.boxW, 40)}px`,
-                                            minHeight: `${Math.max(activeInlineEdit.boxH, (activeInlineEdit.fontSize || 11) * scale + 6)}px`,
-                                            lineHeight: 1.2
-                                        }}
-                                    ></div>
+                                    {/*
+                                     * Auto-sizing trick: a hidden <div> mirrors the textarea text.
+                                     * The div's height:auto drives the textarea's height via CSS grid.
+                                     * The div uses white-space:pre so its width = text pixel width.
+                                     * The textarea sits on top via CSS grid overlap.
+                                     */}
+                                    <div className="acrobat-field-wrapper">
+                                        {/* Mirror div — invisible, sizes the grid cell */}
+                                        <div
+                                            className="acrobat-text-mirror"
+                                            aria-hidden="true"
+                                            style={fieldStyle}
+                                        >
+                                            {/* Extra space at end prevents height collapsing to 0 */}
+                                            {activeInlineEdit.text + '\u200b'}
+                                        </div>
+
+                                        {/* Visible, editable textarea — overlays the mirror exactly */}
+                                        <textarea
+                                            key={activeInlineEdit.editId}
+                                            ref={inlineInputRef}
+                                            className="acrobat-text-area"
+                                            value={activeInlineEdit.text}
+                                            rows={1}
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            onMouseDown={(e) => e.stopPropagation()}
+                                            onClick={(e) => e.stopPropagation()}
+                                            onChange={(e) => setActiveInlineEdit(prev => ({ ...prev, text: e.target.value }))}
+                                            onKeyDown={(e) => {
+                                                e.stopPropagation();
+                                                if (e.key === 'Enter') {
+                                                    e.preventDefault();
+                                                    commitInlineEdit();
+                                                } else if (e.key === 'Escape') {
+                                                    e.preventDefault();
+                                                    setActiveInlineEdit(null);
+                                                }
+                                            }}
+                                            style={fieldStyle}
+                                        />
+                                    </div>
                                 </div>
-                            )}
+                                );
+                            })()}
                         </div>
                     </div>
                 )}
