@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { 
     X, Type, Eraser, Square, MousePointer, Plus, Minus, Trash2, 
     Undo2, Redo2, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, 
@@ -31,8 +31,6 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
     // Active INLINE editing item (rendered directly on the canvas)
     const [activeInlineEdit, setActiveInlineEdit] = useState(null);
     // { editId, isNew, originalText, text, fontSize, fontFamily, fontName, textColor, bgFill, pdfX, pdfY, pdfWidth, pdfHeight, boxX, boxY, boxW, boxH }
-    const [inlineInputWidth, setInlineInputWidth] = useState(80);
-    const inlineSizerRef = useRef(null);
 
     // Drawing state for drag-to-create rectangles
     const [isDrawing, setIsDrawing] = useState(false);
@@ -191,25 +189,23 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
         }
     }, [loading, currentPage, scale, renderPage]);
 
-    // Auto-focus and select all text in the inline input when opened
-    useEffect(() => {
-        if (activeInlineEdit && inlineInputRef.current) {
-            inlineInputRef.current.focus();
-            inlineInputRef.current.select();
-        }
-        // Also reset width to sizer width when edit opens
-        if (activeInlineEdit && inlineSizerRef.current) {
-            setInlineInputWidth(Math.max(inlineSizerRef.current.offsetWidth + 20, activeInlineEdit.boxW + 4));
-        }
-    }, [activeInlineEdit]);
-
-    // Grow the input width as the user types using hidden sizer
-    useEffect(() => {
-        if (activeInlineEdit && inlineSizerRef.current) {
-            const sizerW = inlineSizerRef.current.offsetWidth;
-            setInlineInputWidth(Math.max(sizerW + 20, activeInlineEdit.boxW + 4));
-        }
-    }, [activeInlineEdit?.text, activeInlineEdit?.fontSize, activeInlineEdit?.fontFamily, scale]);
+    // When a new edit is opened: set the contentEditable text and select all — runs BEFORE paint
+    useLayoutEffect(() => {
+        if (!activeInlineEdit || !inlineInputRef.current) return;
+        const el = inlineInputRef.current;
+        // Set text content directly (avoids React controlled/contentEditable conflict)
+        el.textContent = activeInlineEdit.text;
+        el.focus();
+        try {
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+        } catch (_) {}
+    // Only fire when a new edit is opened (editId changes), not on every text update
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeInlineEdit?.editId]);
 
     // Push state to undo history
     const pushHistory = (newEdits) => {
@@ -293,18 +289,20 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
         });
     };
 
-    // Commit current inline edit
+    // Commit current inline edit — reads the LIVE text from the contentEditable DOM node
     const commitInlineEdit = () => {
         if (!activeInlineEdit) return;
 
-        const { editId, text, originalText, fontSize, fontFamily, fontName, textColor, bgFill, pdfX, pdfY, pdfWidth, pdfHeight } = activeInlineEdit;
+        // Read the actual current text from the DOM (avoids stale state issue with contentEditable)
+        const liveText = inlineInputRef.current?.textContent ?? activeInlineEdit.text;
+        const { editId, originalText, fontSize, fontFamily, fontName, textColor, bgFill, pdfX, pdfY, pdfWidth, pdfHeight } = activeInlineEdit;
 
-        if (text && text.trim()) {
+        if (liveText && liveText.trim()) {
             const newEdit = {
                 id: editId,
                 type: 'replace_word',
                 originalText: originalText,
-                text: text,
+                text: liveText,
                 fontSize: Number(fontSize) || 11,
                 fontFamily: fontFamily || matchPdfStandardFont(fontName),
                 fontName: fontName,
@@ -875,131 +873,180 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                 />
                             )}
 
-                            {/* 4. TRUE IN-PLACE INLINE EDITING ELEMENT (DIRECT ON DOCUMENT) */}
+                            {/* 4. ACROBAT-STYLE IN-PLACE TEXT EDITOR */}
                             {activeInlineEdit && (
-                                <div 
-                                    className="inline-edit-wrapper animate-scale-up"
+                                <div
+                                    className="acrobat-edit-wrapper"
                                     style={{
-                                        left: `${activeInlineEdit.boxX - 2}px`,
-                                        top: `${activeInlineEdit.boxY - 2}px`,
-                                        zIndex: 200
+                                        left: `${activeInlineEdit.boxX - 3}px`,
+                                        top: `${activeInlineEdit.boxY - 3}px`,
                                     }}
                                     onMouseDown={(e) => e.stopPropagation()}
                                     onClick={(e) => e.stopPropagation()}
                                 >
-                                    {/* Mini Attached Floating Format Toolbar */}
-                                    <div className="inline-micro-toolbar" onMouseDown={(e) => e.stopPropagation()}>
+                                    {/* Acrobat-style Properties Bar */}
+                                    <div className="acrobat-props-bar" onMouseDown={(e) => e.stopPropagation()}>
+                                        {/* Font family */}
                                         <select
-                                            className="micro-select"
+                                            className="acrobat-font-select"
                                             value={activeInlineEdit.fontFamily}
                                             onChange={(e) => setActiveInlineEdit(prev => ({ ...prev, fontFamily: e.target.value }))}
                                             title="Font Family"
                                         >
-                                            <option value="Helvetica">Helvetica (Arial / Sans)</option>
-                                            <option value="HelveticaBold">Helvetica Bold</option>
-                                            <option value="HelveticaOblique">Helvetica Italic</option>
-                                            <option value="HelveticaBoldOblique">Helvetica Bold Italic</option>
-                                            <option value="TimesRoman">Times Roman (Serif)</option>
-                                            <option value="TimesRomanBold">Times Roman Bold</option>
-                                            <option value="TimesRomanItalic">Times Roman Italic</option>
-                                            <option value="TimesRomanBoldItalic">Times Bold Italic</option>
-                                            <option value="Courier">Courier (Monospace)</option>
-                                            <option value="CourierBold">Courier Bold</option>
+                                            <optgroup label="Sans-Serif">
+                                                <option value="Helvetica">Helvetica</option>
+                                                <option value="HelveticaBold">Helvetica Bold</option>
+                                                <option value="HelveticaOblique">Helvetica Italic</option>
+                                                <option value="HelveticaBoldOblique">Helvetica Bold Italic</option>
+                                            </optgroup>
+                                            <optgroup label="Serif">
+                                                <option value="TimesRoman">Times Roman</option>
+                                                <option value="TimesRomanBold">Times Roman Bold</option>
+                                                <option value="TimesRomanItalic">Times Roman Italic</option>
+                                                <option value="TimesRomanBoldItalic">Times Bold Italic</option>
+                                            </optgroup>
+                                            <optgroup label="Monospace">
+                                                <option value="Courier">Courier</option>
+                                                <option value="CourierBold">Courier Bold</option>
+                                            </optgroup>
                                         </select>
 
-                                        {/* Font Size Step Controls */}
-                                        <button 
-                                            className="micro-btn" 
-                                            onClick={() => setActiveInlineEdit(prev => ({ ...prev, fontSize: Math.max(6, Number((prev.fontSize - 0.5).toFixed(1))) }))}
-                                            title="Decrease Font Size (-0.5pt)"
-                                        >
-                                            <Minus size={12} />
-                                        </button>
+                                        <div className="acrobat-bar-divider" />
 
+                                        {/* Font size */}
+                                        <button
+                                            className="acrobat-bar-btn"
+                                            onMouseDown={(e) => e.preventDefault()}
+                                            onClick={() => setActiveInlineEdit(prev => ({ ...prev, fontSize: Math.max(6, Number((prev.fontSize - 0.5).toFixed(1))) }))}
+                                            title="Smaller"
+                                        >
+                                            <Minus size={11} />
+                                        </button>
                                         <input
                                             type="number"
                                             step="0.5"
-                                            className="micro-number"
+                                            className="acrobat-size-input"
                                             min="6"
                                             max="72"
                                             value={activeInlineEdit.fontSize}
+                                            onMouseDown={(e) => e.stopPropagation()}
                                             onChange={(e) => setActiveInlineEdit(prev => ({ ...prev, fontSize: Number(e.target.value) }))}
-                                            title="Font Size (Points)"
+                                            title="Font Size (pt)"
                                         />
-
-                                        <button 
-                                            className="micro-btn" 
+                                        <button
+                                            className="acrobat-bar-btn"
+                                            onMouseDown={(e) => e.preventDefault()}
                                             onClick={() => setActiveInlineEdit(prev => ({ ...prev, fontSize: Math.min(72, Number((prev.fontSize + 0.5).toFixed(1))) }))}
-                                            title="Increase Font Size (+0.5pt)"
+                                            title="Larger"
                                         >
-                                            <Plus size={12} />
+                                            <Plus size={11} />
                                         </button>
 
-                                        <input
-                                            type="color"
-                                            className="micro-color"
-                                            value={activeInlineEdit.textColor}
-                                            onChange={(e) => setActiveInlineEdit(prev => ({ ...prev, textColor: e.target.value }))}
-                                            title="Text Color"
-                                        />
+                                        <div className="acrobat-bar-divider" />
 
-                                        <button 
-                                            className="micro-btn commit-btn"
+                                        {/* Bold toggle */}
+                                        <button
+                                            className={`acrobat-bar-btn acrobat-style-btn ${getCssFontWeight(activeInlineEdit.fontFamily) === 700 ? 'active' : ''}`}
+                                            onMouseDown={(e) => e.preventDefault()}
+                                            onClick={() => {
+                                                const isBold = getCssFontWeight(activeInlineEdit.fontFamily) === 700;
+                                                const isItalic = getCssFontStyle(activeInlineEdit.fontFamily) === 'italic';
+                                                const base = activeInlineEdit.fontFamily.replace(/Bold|Oblique|Italic/g, '').replace(/BoldOblique|BoldItalic/g, '').trimEnd();
+                                                let next = base;
+                                                if (!isBold && isItalic) next = base + 'BoldOblique';
+                                                else if (!isBold) next = base + 'Bold';
+                                                else if (isItalic) next = base + 'Oblique';
+                                                setActiveInlineEdit(prev => ({ ...prev, fontFamily: next }));
+                                            }}
+                                            title="Bold"
+                                        >
+                                            <strong style={{ fontSize: '13px', lineHeight: 1 }}>B</strong>
+                                        </button>
+
+                                        {/* Italic toggle */}
+                                        <button
+                                            className={`acrobat-bar-btn acrobat-style-btn ${getCssFontStyle(activeInlineEdit.fontFamily) === 'italic' ? 'active' : ''}`}
+                                            onMouseDown={(e) => e.preventDefault()}
+                                            onClick={() => {
+                                                const isBold = getCssFontWeight(activeInlineEdit.fontFamily) === 700;
+                                                const isItalic = getCssFontStyle(activeInlineEdit.fontFamily) === 'italic';
+                                                const base = activeInlineEdit.fontFamily.replace(/BoldOblique|BoldItalic|Oblique|Italic/g, '').trimEnd();
+                                                let next = base;
+                                                if (!isItalic && isBold) next = base + 'BoldOblique';
+                                                else if (!isItalic) next = base + 'Oblique';
+                                                else if (isBold) next = base + 'Bold';
+                                                setActiveInlineEdit(prev => ({ ...prev, fontFamily: next }));
+                                            }}
+                                            title="Italic"
+                                        >
+                                            <em style={{ fontSize: '13px', lineHeight: 1, fontStyle: 'italic' }}>I</em>
+                                        </button>
+
+                                        <div className="acrobat-bar-divider" />
+
+                                        {/* Text colour */}
+                                        <label className="acrobat-color-btn" title="Text Color">
+                                            <span style={{
+                                                display: 'inline-block', width: 14, height: 14,
+                                                borderRadius: 2, background: activeInlineEdit.textColor,
+                                                border: '1px solid rgba(0,0,0,0.25)', flexShrink: 0
+                                            }} />
+                                            <span style={{ fontSize: '0.7rem' }}>A</span>
+                                            <input
+                                                type="color"
+                                                value={activeInlineEdit.textColor}
+                                                style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }}
+                                                onChange={(e) => setActiveInlineEdit(prev => ({ ...prev, textColor: e.target.value }))}
+                                            />
+                                        </label>
+
+                                        <div className="acrobat-bar-divider" />
+
+                                        {/* Commit */}
+                                        <button
+                                            className="acrobat-bar-btn acrobat-commit-btn"
+                                            onMouseDown={(e) => e.preventDefault()}
                                             onClick={commitInlineEdit}
-                                            title="Commit Change (Enter)"
+                                            title="Accept (Enter)"
                                         >
                                             <Check size={13} />
                                         </button>
 
-                                        <button 
-                                            className="micro-btn delete-btn"
-                                            onClick={() => {
-                                                handleRemoveEdit(activeInlineEdit.editId);
-                                                setActiveInlineEdit(null);
-                                            }}
-                                            title="Discard (Esc)"
+                                        {/* Cancel */}
+                                        <button
+                                            className="acrobat-bar-btn acrobat-cancel-btn"
+                                            onMouseDown={(e) => e.preventDefault()}
+                                            onClick={() => setActiveInlineEdit(null)}
+                                            title="Cancel (Esc)"
                                         >
-                                            <Trash2 size={13} />
+                                            <X size={12} />
                                         </button>
                                     </div>
 
-                                    {/* Hidden sizer span — mirrors the input text to measure true pixel width */}
-                                    <span
-                                        ref={inlineSizerRef}
-                                        aria-hidden="true"
-                                        style={{
-                                            position: 'absolute',
-                                            visibility: 'hidden',
-                                            whiteSpace: 'pre',
-                                            pointerEvents: 'none',
-                                            fontSize: `${(activeInlineEdit.fontSize || 11) * scale}px`,
-                                            fontFamily: getCssFontFamily(activeInlineEdit.fontFamily),
-                                            fontWeight: getCssFontWeight(activeInlineEdit.fontFamily),
-                                            fontStyle: getCssFontStyle(activeInlineEdit.fontFamily),
-                                            letterSpacing: 'normal',
-                                            padding: '0 4px'
-                                        }}
-                                    >
-                                        {activeInlineEdit.text || ' '}
-                                    </span>
-
-                                    {/* Direct In-Place Input Box — auto-grows with text, matches PDF font exactly */}
-                                    <input
+                                    {/* contentEditable text area — auto-expands, matches PDF font */}
+                                    <div
+                                        key={activeInlineEdit.editId}
                                         ref={inlineInputRef}
-                                        type="text"
-                                        className="direct-inline-input"
-                                        value={activeInlineEdit.text}
-                                        autoComplete="off"
-                                        spellCheck="false"
+                                        contentEditable
+                                        suppressContentEditableWarning
+                                        className="acrobat-text-field"
+                                        spellCheck={false}
                                         onMouseDown={(e) => e.stopPropagation()}
                                         onClick={(e) => e.stopPropagation()}
-                                        onChange={(e) => setActiveInlineEdit(prev => ({ ...prev, text: e.target.value }))}
+                                        onInput={(e) => {
+                                            // Sync state for font/color toolbar only (text read from DOM on commit)
+                                            setActiveInlineEdit(prev => ({
+                                                ...prev,
+                                                text: e.currentTarget.textContent
+                                            }));
+                                        }}
                                         onKeyDown={(e) => {
                                             e.stopPropagation();
                                             if (e.key === 'Enter') {
                                                 e.preventDefault();
                                                 commitInlineEdit();
                                             } else if (e.key === 'Escape') {
+                                                e.preventDefault();
                                                 setActiveInlineEdit(null);
                                             }
                                         }}
@@ -1009,12 +1056,11 @@ export default function VisualPdfEditor({ file, onClose, onSave }) {
                                             fontWeight: getCssFontWeight(activeInlineEdit.fontFamily),
                                             fontStyle: getCssFontStyle(activeInlineEdit.fontFamily),
                                             color: activeInlineEdit.textColor,
-                                            width: `${inlineInputWidth}px`,
-                                            minWidth: `${activeInlineEdit.boxW + 4}px`,
-                                            height: `${Math.max(activeInlineEdit.boxH + 4, (activeInlineEdit.fontSize || 11) * scale + 8)}px`,
-                                            lineHeight: 1
+                                            minWidth: `${Math.max(activeInlineEdit.boxW, 40)}px`,
+                                            minHeight: `${Math.max(activeInlineEdit.boxH, (activeInlineEdit.fontSize || 11) * scale + 6)}px`,
+                                            lineHeight: 1.2
                                         }}
-                                    />
+                                    ></div>
                                 </div>
                             )}
                         </div>

@@ -953,124 +953,243 @@ body {
   background: rgba(255, 255, 255, 0.5);
 }
 
-/* ─── Direct In-Place Inline Document Editor ───────────────────────────────── */
+/* ─── Adobe Acrobat–Style In-Place Text Editor ──────────────────────────── */
 
-.inline-edit-wrapper {
+/* Outer wrapper — positions toolbar + field together */
+.acrobat-edit-wrapper {
   position: absolute;
-  z-index: 200;
-  display: flex;
+  z-index: 300;
+  display: inline-flex;
   flex-direction: column;
+  align-items: flex-start;
+  animation: fadeIn 0.12s ease-out;
 }
 
-.inline-micro-toolbar {
+/* Properties bar above the text field */
+.acrobat-props-bar {
   position: absolute;
-  bottom: calc(100% + 6px);
+  bottom: calc(100% + 5px);
   left: 0;
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.3rem 0.5rem;
-  background: rgba(15, 23, 42, 0.95);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--accent-color);
-  border-radius: var(--border-radius-sm);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4), 0 0 10px rgba(59, 130, 246, 0.3);
+  gap: 2px;
+  padding: 3px 6px;
+  background: #f8f9fa;
+  border: 1px solid #c8ccd0;
+  border-radius: 5px;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.18), 0 1px 3px rgba(0, 0, 0, 0.12);
   white-space: nowrap;
-  animation: fadeIn 0.15s ease-out;
+  z-index: 310;
+  font-family: 'Inter', system-ui, sans-serif;
 }
 
-[data-theme='light'] .inline-micro-toolbar {
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+[data-theme='dark'] .acrobat-props-bar {
+  background: #2d3748;
+  border-color: #4a5568;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
 }
 
-.micro-select {
-  padding: 0.2rem 0.35rem;
-  font-size: 0.72rem;
-  border-radius: 4px;
-  border: 1px solid var(--card-border);
-  background: rgba(0, 0, 0, 0.3);
-  color: var(--text-primary);
-  outline: none;
+/* Thin vertical separator */
+.acrobat-bar-divider {
+  width: 1px;
+  height: 18px;
+  background: #d0d4d9;
+  margin: 0 3px;
+  flex-shrink: 0;
 }
 
-[data-theme='light'] .micro-select {
-  background: #f1f5f9;
+[data-theme='dark'] .acrobat-bar-divider {
+  background: #4a5568;
 }
 
-.micro-number {
-  width: 44px;
-  padding: 0.2rem 0.3rem;
-  font-size: 0.72rem;
-  border-radius: 4px;
-  border: 1px solid var(--card-border);
-  background: rgba(0, 0, 0, 0.3);
-  color: var(--text-primary);
-  outline: none;
-}
-
-[data-theme='light'] .micro-number {
-  background: #f1f5f9;
-}
-
-.micro-color {
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: none;
+/* Font family dropdown */
+.acrobat-font-select {
+  padding: 2px 4px;
+  font-size: 0.73rem;
   border-radius: 3px;
+  border: 1px solid #c8ccd0;
+  background: #ffffff;
+  color: #1a202c;
+  outline: none;
   cursor: pointer;
-  background: none;
+  max-width: 130px;
 }
 
-.micro-btn {
+[data-theme='dark'] .acrobat-font-select {
+  background: #3d4a5c;
+  border-color: #4a5568;
+  color: #e2e8f0;
+}
+
+.acrobat-font-select:focus {
+  border-color: #2684ff;
+  box-shadow: 0 0 0 2px rgba(38, 132, 255, 0.25);
+}
+
+/* Font size number input */
+.acrobat-size-input {
+  width: 38px;
+  padding: 2px 3px;
+  font-size: 0.73rem;
+  text-align: center;
+  border-radius: 3px;
+  border: 1px solid #c8ccd0;
+  background: #ffffff;
+  color: #1a202c;
+  outline: none;
+  -moz-appearance: textfield;
+}
+.acrobat-size-input::-webkit-inner-spin-button,
+.acrobat-size-input::-webkit-outer-spin-button { -webkit-appearance: none; }
+.acrobat-size-input:focus {
+  border-color: #2684ff;
+  box-shadow: 0 0 0 2px rgba(38, 132, 255, 0.25);
+}
+
+[data-theme='dark'] .acrobat-size-input {
+  background: #3d4a5c;
+  border-color: #4a5568;
+  color: #e2e8f0;
+}
+
+/* Generic icon/text bar button */
+.acrobat-bar-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0.25rem;
-  border-radius: 4px;
-  border: none;
-  cursor: pointer;
-  transition: var(--transition);
-}
-
-.micro-btn.commit-btn {
-  background: var(--accent-gradient);
-  color: white;
-}
-
-.micro-btn.commit-btn:hover {
-  filter: brightness(1.15);
-}
-
-.micro-btn.delete-btn {
-  background: rgba(239, 68, 68, 0.15);
-  color: var(--error-color);
-}
-
-.micro-btn.delete-btn:hover {
-  background: var(--error-color);
-  color: white;
-}
-
-.direct-inline-input {
-  background: rgba(255, 255, 255, 0.97) !important;
-  border: 2px solid var(--accent-color) !important;
-  border-radius: 3px;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3), 0 4px 12px rgba(0, 0, 0, 0.25);
-  outline: none !important;
+  min-width: 24px;
+  height: 24px;
   padding: 0 4px;
-  box-sizing: border-box;
-  display: block;
-  white-space: nowrap;
-  overflow: visible;
-  line-height: 1;
-  letter-spacing: normal;
-  transition: width 0.05s ease;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #374151;
+  cursor: pointer;
+  font-size: 0.78rem;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 
-[data-theme='light'] .direct-inline-input {
-  background: rgba(255, 255, 255, 0.99) !important;
+[data-theme='dark'] .acrobat-bar-btn {
+  color: #cbd5e0;
 }
+
+.acrobat-bar-btn:hover {
+  background: #e5e7eb;
+  border-color: #d1d5db;
+}
+
+[data-theme='dark'] .acrobat-bar-btn:hover {
+  background: #4a5568;
+  border-color: #718096;
+}
+
+/* Bold / Italic toggle buttons */
+.acrobat-style-btn {
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.acrobat-style-btn.active {
+  background: #dbeafe;
+  border-color: #2684ff;
+  color: #1d4ed8;
+}
+
+[data-theme='dark'] .acrobat-style-btn.active {
+  background: rgba(38, 132, 255, 0.2);
+  border-color: #4299e1;
+  color: #90cdf4;
+}
+
+/* Colour swatch label button */
+.acrobat-color-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.73rem;
+  color: #374151;
+  position: relative;
+  transition: background 0.12s;
+}
+
+.acrobat-color-btn:hover {
+  background: #e5e7eb;
+  border-color: #d1d5db;
+}
+
+[data-theme='dark'] .acrobat-color-btn {
+  color: #cbd5e0;
+}
+
+[data-theme='dark'] .acrobat-color-btn:hover {
+  background: #4a5568;
+}
+
+/* Accept (✓) button — blue */
+.acrobat-commit-btn {
+  background: #2684ff !important;
+  color: white !important;
+  border-color: #1a6ee0 !important;
+}
+
+.acrobat-commit-btn:hover {
+  background: #1a6ee0 !important;
+  filter: brightness(1.05);
+}
+
+/* Cancel (✗) button — subtle red */
+.acrobat-cancel-btn {
+  color: #dc2626 !important;
+}
+
+.acrobat-cancel-btn:hover {
+  background: #fee2e2 !important;
+  border-color: #fca5a5 !important;
+  color: #b91c1c !important;
+}
+
+[data-theme='dark'] .acrobat-cancel-btn:hover {
+  background: rgba(220, 38, 38, 0.2) !important;
+  border-color: rgba(220, 38, 38, 0.4) !important;
+}
+
+/* The contentEditable text field — sits directly on the PDF, auto-grows */
+.acrobat-text-field {
+  display: inline-block;
+  white-space: pre;          /* keeps full text on one line, width grows with content */
+  min-width: 40px;
+  padding: 1px 3px;
+  border: 2px solid #2684ff;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 0 0 3px rgba(38, 132, 255, 0.22);
+  outline: none;
+  cursor: text;
+  caret-color: #2684ff;
+  box-sizing: border-box;
+  letter-spacing: normal;
+  overflow: visible;
+}
+
+.acrobat-text-field:focus {
+  box-shadow: 0 0 0 3px rgba(38, 132, 255, 0.3);
+}
+
+[data-theme='light'] .acrobat-text-field {
+  background: rgba(255, 255, 255, 0.98);
+}
+
+[data-theme='dark'] .acrobat-text-field {
+  background: rgba(255, 255, 255, 0.95);
+  color: #1a202c; /* keep text dark so it reads on the white field bg */
+}
+
+/* Keep old classes in case they're referenced elsewhere */
+.inline-edit-wrapper { display: none; }
+.direct-inline-input { display: none; }
 
